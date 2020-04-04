@@ -21,7 +21,6 @@ class MySAGEConv(PyG.SAGEConv):
         super(MySAGEConv, self).__init__(in_channels, out_channels,
                                          normalize=normalize, concat=concat, bias=bias, **kwargs)
     def message(self, x_j, edge_weight):
-        print('x_j', x_j.size())
         return x_j if edge_weight is None else edge_weight.view(-1, 1, 1) * x_j
 
     def update(self, aggr_out, x, res_n_id):

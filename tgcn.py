@@ -16,7 +16,7 @@ class GCNBlock(nn.Module):
         self.gcn = GCNUnit(in_channels=in_channels,
                            out_channels=spatial_channels)
 
-    def forward(self, X, g, pretrain):
+    def forward(self, X, g):
         """
         :param X: Input data of shape (batch_size, num_nodes, num_timesteps,
         num_features=in_channels).
@@ -26,7 +26,7 @@ class GCNBlock(nn.Module):
         """
         t1 = X.permute(0, 2, 1, 3).contiguous(
         ).view(-1, X.shape[1], X.shape[3])
-        t2 = F.relu(self.gcn(t1, g, pretrain))
+        t2 = F.relu(self.gcn(t1, g))
         out = t2.view(X.shape[0], X.shape[2], t2.shape[1],
                       t2.shape[2]).permute(0, 2, 1, 3)
 
@@ -57,13 +57,13 @@ class TGCN(nn.Module):
         self.gru = KRNN(num_nodes, hidden_size, num_timesteps_input,
                         num_timesteps_output, hidden_size)
 
-    def forward(self, X, g, pretrain=False):
+    def forward(self, X, g):
         """
         :param X: Input data of shape (batch_size, num_nodes, num_timesteps,
         num_features=in_channels).
         :param A_hat: Normalized adjacency matrix.
         """
-        out1 = self.gcn(X, g, pretrain)
+        out1 = self.gcn(X, g)
         out2 = self.gru(out1, g['cent_n_id'])
 
         return out2

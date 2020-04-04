@@ -97,7 +97,7 @@ class NeighborSampleDataset(IterableDataset):
         ) .to('cpu')
 
         graph_sampler = NeighborSampler(
-            graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[5, 5], num_hops=2, batch_size=5, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler
@@ -119,9 +119,7 @@ class NeighborSampleDataset(IterableDataset):
         graph['res_n_id'] = [
             data_flow[i].res_n_id.to(device) for i in range(layers)
         ]
-        graph['cent_n_id'] = data_flow[0].n_id[
-            data_flow[-1].res_n_id
-        ].to(device)
+        graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
         graph['graph_n_id'] = data_flow[0].n_id
 
         return graph
@@ -167,7 +165,7 @@ class WrapperNet(pl.LightningModule):
         self.register_buffer(
             'edge_index', torch.LongTensor(2, hparams.num_edges))
         self.register_buffer(
-            'edge_weight', torch.LongTensor(hparams.num_edges))
+            'edge_weight', torch.FloatTensor(hparams.num_edges))
 
         self.epoch_count = 0
 
@@ -205,10 +203,7 @@ class WrapperNet(pl.LightningModule):
     #         return self.make_sample_dataloader(self.test_input, self.test_target, shuffle=False)
 
     def forward(self, X, g):
-        if self.epoch_count <= 1:
-            return self.net(X, g, pretrain=True)
-        else:
-            return self.net(X, g, pretrain=False)
+        return self.net(X, g)
 
     def training_step(self, batch, batch_idx):
         X, y, g = batch
@@ -229,8 +224,6 @@ class WrapperNet(pl.LightningModule):
         tqdm_dict = dict()
         loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         tqdm_dict['val_loss'] = loss_mean
-
-        self.epoch_count += 1
 
         return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
 
@@ -313,7 +306,7 @@ if __name__ == '__main__':
     logger = TestTubeLogger(save_dir=log_dir, name=log_name)
 
     trainer = pl.Trainer(
-        gpus=[1, 3],
+        gpus=[1],
         max_epochs=epochs,
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,

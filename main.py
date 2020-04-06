@@ -97,7 +97,7 @@ class NeighborSampleDataset(IterableDataset):
         ) .to('cpu')
 
         graph_sampler = NeighborSampler(
-            graph, size=[5, 5], num_hops=2, batch_size=5, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler
@@ -120,6 +120,10 @@ class NeighborSampleDataset(IterableDataset):
             data_flow[i].res_n_id.to(device) for i in range(layers)
         ]
         graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
+
+        graph['n_id'] = [
+            data_flow[i].n_id.to(device) for i in range(layers)
+        ]
         graph['graph_n_id'] = data_flow[0].n_id
 
         return graph
@@ -227,16 +231,6 @@ class WrapperNet(pl.LightningModule):
 
         return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
 
-    # def test_step(self, batch, batch_idx):
-    #     X, y = batch
-    #     y_hat = self(X)
-    #     return {'loss': loss_criterion(y_hat, y)}
-
-    # def test_epoch_end(self, outputs):
-    #     loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-    #     tqdm_dict = {'test_loss': loss_mean}
-    #     return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
-
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
 
@@ -306,7 +300,7 @@ if __name__ == '__main__':
     logger = TestTubeLogger(save_dir=log_dir, name=log_name)
 
     trainer = pl.Trainer(
-        gpus=[1],
+        gpus=[1, 2],
         max_epochs=epochs,
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,
@@ -315,5 +309,3 @@ if __name__ == '__main__':
     )
     trainer.fit(net)
     print('Training time {}'.format(time.time() - start_time))
-
-    trainer.test()

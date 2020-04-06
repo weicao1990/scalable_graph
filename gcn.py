@@ -20,18 +20,16 @@ class MySAGEConv(PyG.SAGEConv):
     def __init__(self, in_channels, out_channels, normalize=False, concat=False, bias=True, **kwargs):
         super(MySAGEConv, self).__init__(in_channels, out_channels,
                                          normalize=normalize, concat=concat, bias=bias, **kwargs)
+
     def message(self, x_j, edge_weight):
         return x_j if edge_weight is None else edge_weight.view(-1, 1, 1) * x_j
 
     def update(self, aggr_out, x, res_n_id):
-        # TODO: this triggers a CUDA error
-        # print(aggr_out.size())
         if self.concat and torch.is_tensor(x):
             aggr_out = torch.cat([x, aggr_out], dim=-1)
         elif self.concat and (isinstance(x, tuple) or isinstance(x, list)):
             assert res_n_id is not None
             # TODO: to check the consistency
-            # print((x[0][res_n_id] - aggr_out).abs().sum())
             aggr_out = torch.cat([x[0][res_n_id], aggr_out], dim=-1)
 
         aggr_out = torch.matmul(aggr_out, self.weight)
@@ -59,12 +57,17 @@ class SAGENet(nn.Module):
 
         size = g['size']
         res_n_id = g['res_n_id']
-        
+
         # swap node to dim 0
         X = X.permute(1, 0, 2)
 
         loop_index_list = [
-            res_n_id[i].unsqueeze(0).repeat(2, 1).to(device=edge_index[0].device) for i in range(2)
+            torch.stack(
+                [
+                    res_n_id[i],
+                    torch.arange(0, res_n_id[i].size(0)).to(device=edge_index[0].device)
+                ], dim=0
+            ) for i in range(2)
         ]
 
         if pretrain:
@@ -73,7 +76,7 @@ class SAGENet(nn.Module):
         else:
             conv1 = self.conv1(
                 (X, None), edge_index[0], edge_weight=edge_weight[0], size=size[0], res_n_id=res_n_id[0])
-        
+
         X = F.leaky_relu(conv1)
 
         if pretrain:
@@ -82,7 +85,6 @@ class SAGENet(nn.Module):
         else:
             conv2 = self.conv2(
                 (X, None), edge_index[1], edge_weight=edge_weight[1], size=size[1], res_n_id=res_n_id[1])
-
 
         X = F.leaky_relu(conv2)
         X = X.permute(1, 0, 2)

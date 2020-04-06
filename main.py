@@ -122,7 +122,6 @@ class NeighborSampleDataset(IterableDataset):
         graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
 
         graph['graph_n_id'] = data_flow[0].n_id
-        print(graph['graph_n_id'].size())
 
         return graph
 

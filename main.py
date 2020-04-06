@@ -97,7 +97,7 @@ class NeighborSampleDataset(IterableDataset):
         ) .to('cpu')
 
         graph_sampler = NeighborSampler(
-            graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[10, 15], num_hops=2, batch_size=200, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler
@@ -121,10 +121,8 @@ class NeighborSampleDataset(IterableDataset):
         ]
         graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
 
-        graph['n_id'] = [
-            data_flow[i].n_id.to(device) for i in range(layers)
-        ]
         graph['graph_n_id'] = data_flow[0].n_id
+        print(graph['graph_n_id'].size())
 
         return graph
 

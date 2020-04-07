@@ -13,7 +13,8 @@ class MyGATConv(PyG.GATConv):
                  negative_slope=0.2, dropout=0, bias=True, **kwargs):
         super(MyGATConv, self).__init__(in_channels, out_channels, heads=heads,
                                         concat=concat, negative_slope=negative_slope, dropout=dropout, bias=bias)
-        self.att = torch.nn.Parameter(torch.Tensor(1, 1, heads, 3 * out_channels))
+        self.att = nn.Parameter(torch.Tensor(1, 1, heads, 2 * out_channels))
+        nn.init.xavier_uniform_(self.att)
 
     def forward(self, x, edge_index, edge_weight=None, size=None):
         """"""
@@ -30,8 +31,10 @@ class MyGATConv(PyG.GATConv):
         x_j = x_j.view(x_j.size(0), x_j.size(1), self.heads, self.out_channels)
 
         x_i = x_i.view(x_i.size(0), x_i.size(1), self.heads, self.out_channels)
-        edge_weight = edge_weight.view(-1, 1, 1, 1).expand_as(x_j)
-        alpha = (torch.cat([x_i, x_j, edge_weight], dim=-1) * self.att).sum(dim=-1)
+        edge_weight = edge_weight.view(-1, 1, 1)
+
+        alpha = (torch.cat([x_i, x_j], dim=-1) * self.att).sum(dim=-1)
+        alpha = alpha * edge_weight
 
         alpha = F.leaky_relu(alpha, self.negative_slope)
         alpha = torch_geometric.utils.softmax(alpha, edge_index_i, size_i)
@@ -55,11 +58,12 @@ class MyGATConv(PyG.GATConv):
 class GATNet(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(GATNet, self).__init__()
+        heads = 4
         self.conv1 = MyGATConv(in_channels=in_channels,
-                               out_channels=16, heads=4, concat=True)
+                               out_channels=16, heads=heads, concat=False)
                                
-        self.conv2 = MyGATConv(in_channels=16*4,
-                               out_channels=out_channels, heads=4, concat=False)
+        self.conv2 = MyGATConv(in_channels=16,
+                               out_channels=out_channels, heads=heads, concat=False)
 
     def forward(self, X, g):
         edge_index = g['edge_index']

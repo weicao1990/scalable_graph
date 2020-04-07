@@ -8,12 +8,81 @@ import torch_geometric.nn as PyG
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
 
 
+class MyGATConv(PyG.GATConv):
+    def __init__(self, in_channels, out_channels, heads=1, concat=True,
+                 negative_slope=0.2, dropout=0, bias=True, **kwargs):
+        super(MyGATConv, self).__init__(in_channels, out_channels, heads=heads,
+                                        concat=concat, negative_slope=negative_slope, dropout=dropout, bias=bias)
+        self.att = torch.nn.Parameter(torch.Tensor(1, 1, heads, 3 * out_channels))
+
+    def forward(self, x, edge_index, edge_weight=None, size=None):
+        """"""
+        if torch.is_tensor(x):
+            x = torch.matmul(x, self.weight)
+        else:
+            x = (None if x[0] is None else torch.matmul(x[0], self.weight),
+                 None if x[1] is None else torch.matmul(x[1], self.weight))
+
+        return self.propagate(edge_index, size=size, x=x, edge_weight=edge_weight)
+
+    def message(self, edge_index_i, edge_index_j, x_i, x_j, size_i, edge_weight):
+        # Compute attention coefficients.
+        x_j = x_j.view(x_j.size(0), x_j.size(1), self.heads, self.out_channels)
+
+        x_i = x_i.view(x_i.size(0), x_i.size(1), self.heads, self.out_channels)
+        edge_weight = edge_weight.view(-1, 1, 1, 1).expand_as(x_j)
+        alpha = (torch.cat([x_i, x_j, edge_weight], dim=-1) * self.att).sum(dim=-1)
+
+        alpha = F.leaky_relu(alpha, self.negative_slope)
+        alpha = torch_geometric.utils.softmax(alpha, edge_index_i, size_i)
+
+        # Sample attention coefficients stochastically.
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+
+        return x_j * alpha.view(x_j.size(0), x_j.size(1), self.heads, 1)
+
+    def update(self, aggr_out):
+        if self.concat is True:
+            aggr_out = aggr_out.view(aggr_out.size(0), aggr_out.size(1), self.heads * self.out_channels)
+        else:
+            aggr_out = aggr_out.mean(dim=-2)
+
+        if self.bias is not None:
+            aggr_out = aggr_out + self.bias
+        return aggr_out
+
+
 class GATNet(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(GATNet, self).__init__()
+        self.conv1 = MyGATConv(in_channels=in_channels,
+                               out_channels=16, heads=4, concat=True)
+                               
+        self.conv2 = MyGATConv(in_channels=16*4,
+                               out_channels=out_channels, heads=4, concat=False)
 
-    def forward(self, X, edge_index, edge_weight, data_flow):
-        pass
+    def forward(self, X, g):
+        edge_index = g['edge_index']
+        edge_weight = g['edge_weight']
+
+        size = g['size']
+        res_n_id = g['res_n_id']
+
+        # swap node to dim 0
+        X = X.permute(1, 0, 2)
+
+        conv1 = self.conv1(
+            (X, X[res_n_id[0]]), edge_index[0], edge_weight=edge_weight[0], size=size[0])
+
+        X = F.leaky_relu(conv1)
+
+        conv2 = self.conv2(
+            (X, X[res_n_id[1]]), edge_index[1], edge_weight=edge_weight[1], size=size[1])
+
+        X = F.leaky_relu(conv2)
+
+        X = X.permute(1, 0, 2)
+        return X
 
 
 class MySAGEConv(PyG.SAGEConv):
@@ -51,7 +120,7 @@ class SAGENet(nn.Module):
         self.conv2 = MySAGEConv(
             16, out_channels, normalize=False, concat=True)
 
-    def forward(self, X, g, pretrain=False):
+    def forward(self, X, g):
         edge_index = g['edge_index']
         edge_weight = g['edge_weight']
 
@@ -61,30 +130,13 @@ class SAGENet(nn.Module):
         # swap node to dim 0
         X = X.permute(1, 0, 2)
 
-        loop_index_list = [
-            torch.stack(
-                [
-                    res_n_id[i],
-                    torch.arange(0, res_n_id[i].size(0)).to(device=edge_index[0].device)
-                ], dim=0
-            ) for i in range(2)
-        ]
-
-        if pretrain:
-            conv1 = self.conv1(
-                (X, None), loop_index_list[0], edge_weight=None, size=size[0], res_n_id=res_n_id[0])
-        else:
-            conv1 = self.conv1(
-                (X, None), edge_index[0], edge_weight=edge_weight[0], size=size[0], res_n_id=res_n_id[0])
+        conv1 = self.conv1(
+            (X, None), edge_index[0], edge_weight=edge_weight[0], size=size[0], res_n_id=res_n_id[0])
 
         X = F.leaky_relu(conv1)
 
-        if pretrain:
-            conv2 = self.conv2(
-                (X, None), loop_index_list[1], edge_weight=None, size=size[1], res_n_id=res_n_id[1])
-        else:
-            conv2 = self.conv2(
-                (X, None), edge_index[1], edge_weight=edge_weight[1], size=size[1], res_n_id=res_n_id[1])
+        conv2 = self.conv2(
+            (X, None), edge_index[1], edge_weight=edge_weight[1], size=size[1], res_n_id=res_n_id[1])
 
         X = F.leaky_relu(conv2)
         X = X.permute(1, 0, 2)

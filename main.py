@@ -3,12 +3,15 @@ import time
 import argparse
 import pickle as pk
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 
 import torch_geometric
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
+
+from graph_saint import GraphSAINTRandomWalkSampler
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TestTubeLogger
@@ -37,9 +40,6 @@ parser.add_argument('-d', "--dataset", choices=["metr", "nyc-bike"],
                     help='Choose dataset', default='metr')
 parser.add_argument('-t', "--gcn-type", choices=['sage', 'graph', 'gat'],
                     help='Choose GCN Conv Type', default='graph')
-parser.add_argument('-part', "--gcn-partition", choices=['cluster', 'sample'],
-                    help='Choose GCN partition method',
-                    default=None)
 parser.add_argument('-batchsize', type=int, default=32,
                     help='Training batch size')
 parser.add_argument('-epochs', type=int, default=1000,
@@ -64,10 +64,9 @@ log_name = args.log_name
 log_dir = args.log_dir
 gpus = args.gpus
 
-loss_criterion = {'mse': nn.MSELoss(), 'mae': nn.L1Loss()}\
+loss_criterion = {'mse': nn.MSELoss(reduction='none'), 'mae': nn.L1Loss(reduction='none')}\
     .get(args.loss_criterion)
 gcn_type = args.gcn_type
-gcn_partition = args.gcn_partition
 batch_size = args.batchsize
 epochs = args.epochs
 num_timesteps_input = args.num_timesteps_input
@@ -75,7 +74,7 @@ num_timesteps_output = args.num_timesteps_output
 early_stop_rounds = args.early_stop_rounds
 
 
-class NeighborSampleDataset(IterableDataset):
+class SaintDataset(IterableDataset):
     def __init__(self, X, y, edge_index, edge_weight, num_nodes, batch_size, shuffle):
         self.X = X
         self.y = y
@@ -96,40 +95,15 @@ class NeighborSampleDataset(IterableDataset):
             edge_index=self.edge_index, edge_attr=self.edge_weight, num_nodes=self.num_nodes
         ) .to('cpu')
 
-        graph_sampler = NeighborSampler(
-            # graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
-            graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
+        loader = GraphSAINTRandomWalkSampler(
+            graph, batch_size=100, walk_length=2, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
         )
 
-        return graph_sampler
-
-    def sample_subgraph(self, data_flow):
-        graph = dict()
-
-        device = self.edge_index.device
-
-        layers = len(data_flow)
-
-        graph['edge_index'] = [
-            data_flow[i].edge_index.to(device) for i in range(layers)
-        ]
-        graph['edge_weight'] = [
-            self.edge_weight[data_flow[i].e_id].to(device) for i in range(layers)
-        ]
-        graph['size'] = [data_flow[i].size for i in range(layers)]
-        graph['res_n_id'] = [
-            data_flow[i].res_n_id.to(device) for i in range(layers)
-        ]
-        graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
-
-        graph['graph_n_id'] = data_flow[0].n_id
-
-        return graph
+        return loader
 
     def __iter__(self):
-        for data_flow in self.graph_sampler():
-            g = self.sample_subgraph(data_flow)
-            X, y = self.X[:, g['graph_n_id']], self.y[:, g['cent_n_id']]
+        for data in self.graph_sampler:
+            X, y = self.X[:, data.node_idx], self.y[:, data.node_idx]
 
             subset = TensorDataset(X, y)
             indices = np.arange(len(subset))
@@ -137,19 +111,21 @@ class NeighborSampleDataset(IterableDataset):
             if self.shuffle:
                 np.random.shuffle(indices)
 
-            num_batches = (len(subset) + self.batch_size -
-                           1) // self.batch_size
+            num_batches = (
+                len(subset) + self.batch_size - 1
+            ) // self.batch_size
 
             for batch_id in range(num_batches):
                 start = batch_id * self.batch_size
                 end = (batch_id + 1) * self.batch_size
-                yield X[indices[start: end]], y[indices[start: end]], g
+
+                yield X[indices[start: end]], y[indices[start: end]], data, indices[start: end]
 
     def get_length(self):
         length = 0
-        for data_flow in self.graph_sampler():
-            g = self.sample_subgraph(data_flow)
-            length += (self.y.size(0) + self.batch_size - 1) // self.batch_size
+        for data in self.graph_sampler:
+            X, y = self.X[:, data.node_idx], self.y[:, data.node_idx]
+            length += (X.size(0) + self.batch_size - 1) // self.batch_size
         return length
 
     def __len__(self):
@@ -185,49 +161,93 @@ class WrapperNet(pl.LightningModule):
         self.test_target = test_target
 
     def make_sample_dataloader(self, X, y, shuffle):
-        # return a data loader based on neighbor sampling
-        dataset = NeighborSampleDataset(
+        # return a data loader based on saint
+        dataset = SaintDataset(
             X, y, self.edge_index, self.edge_weight,
             num_nodes=self.hparams.num_nodes, batch_size=batch_size, shuffle=shuffle
         )
         return DataLoader(dataset, batch_size=None)
 
     def train_dataloader(self):
-        if self.hparams.gcn_partition == 'sample':
-            return self.make_sample_dataloader(self.training_input, self.training_target, shuffle=True)
+        return self.make_sample_dataloader(self.training_input, self.training_target, shuffle=True)
 
     def val_dataloader(self):
-        if self.hparams.gcn_partition == 'sample':
-            return self.make_sample_dataloader(self.val_input, self.val_target, shuffle=False)
-
-    # def test_dataloader(self):
-    #     if self.hparams.gcn_partition == 'sample':
-    #         return self.make_sample_dataloader(self.test_input, self.test_target, shuffle=False)
+        return self.make_sample_dataloader(self.val_input, self.val_target, shuffle=False)
 
     def forward(self, X, g):
         return self.net(X, g)
 
     def training_step(self, batch, batch_idx):
-        X, y, g = batch
+        X, y, g, rows = batch
+        g = g.to(X.device)
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
         loss = loss_criterion(y_hat, y)
-
+        # loss = (loss * g.node_norm.view(1, -1, 1)).sum()
+        loss = loss.mean()
         return {'loss': loss, 'log': {'train_loss': loss}}
 
+    # def validation_step(self, batch, batch_idx):
+    #     X, y, g, rows = batch
+    #     g = g.to(X.device)
+    #     y_hat = self(X, g)
+    #     assert(y.size() == y_hat.size())
+    #     loss = loss_criterion(y_hat, y)
+    #     # loss = (loss * g.node_norm.view(1, -1, 1)).sum()
+    #     loss = loss.mean()
+    #     return {'loss': loss}
+
+    # def validation_epoch_end(self, outputs):
+    #     tqdm_dict = dict()
+    #     loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
+    #     tqdm_dict['val_loss'] = loss_mean
+
+    #     return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
+
     def validation_step(self, batch, batch_idx):
-        X, y, g = batch
+        X, y, g, rows = batch
+
+        g = g.to(X.device)
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
-        loss = loss_criterion(y_hat, y)
-        return {'loss': loss}
+
+        out_dim = y.size(-1)
+
+        index_ptr = torch.cartesian_prod(
+            torch.arange(rows.size(0)),
+            torch.arange(g.node_idx.size(0)),
+            torch.arange(out_dim)
+        )
+
+        label = pd.DataFrame({
+            'row_idx': rows[index_ptr[:, 0]].data.cpu().numpy(),
+            'node_idx': g.node_idx[index_ptr[:, 1]].data.cpu().numpy(),
+            'feat_idx': index_ptr[:, 2].data.cpu().numpy(),
+            'val': y[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
+        })
+
+        pred = pd.DataFrame({
+            'row_idx': rows[index_ptr[:, 0]].data.cpu().numpy(),
+            'node_idx': g.node_idx[index_ptr[:, 1]].data.cpu().numpy(),
+            'feat_idx': index_ptr[:, 2].data.cpu().numpy(),
+            'val': y_hat[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
+        })
+
+        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        return {'label': label, 'pred': pred}
 
     def validation_epoch_end(self, outputs):
-        tqdm_dict = dict()
-        loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        tqdm_dict['val_loss'] = loss_mean
+        pred = pd.concat([x['pred'] for x in outputs], axis=0)
+        label = pd.concat([x['label'] for x in outputs], axis=0)
 
-        return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
+        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        loss = np.mean((pred.values - label.values) ** 2)
+
+        return {'log': {'val_loss': loss}, 'progress_bar': {'val_loss': loss}}
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
@@ -281,7 +301,6 @@ if __name__ == '__main__':
         'num_timesteps_input': num_timesteps_input,
         'num_timesteps_output': num_timesteps_output,
         'gcn_type': gcn_type,
-        'gcn_partition': gcn_partition
     })
 
     net = WrapperNet(hparams)
@@ -298,12 +317,13 @@ if __name__ == '__main__':
     logger = TestTubeLogger(save_dir=log_dir, name=log_name)
 
     trainer = pl.Trainer(
-        gpus=gpus,
+        gpus=[3],
         max_epochs=epochs,
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,
         logger=logger,
-        track_grad_norm=2
+        track_grad_norm=2,
+        train_percent_check=0.01
     )
     trainer.fit(net)
     print('Training time {}'.format(time.time() - start_time))

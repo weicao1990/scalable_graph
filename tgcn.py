@@ -64,6 +64,6 @@ class TGCN(nn.Module):
         :param A_hat: Normalized adjacency matrix.
         """
         out1 = self.gcn(X, g)
-        out2 = self.gru(out1, g['cent_n_id'])
+        out2 = self.gru(out1, g.node_idx)
 
         return out2

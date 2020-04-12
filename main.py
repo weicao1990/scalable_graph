@@ -96,7 +96,7 @@ class SaintDataset(IterableDataset):
         ) .to('cpu')
 
         loader = GraphSAINTRandomWalkSampler(
-            graph, batch_size=100, walk_length=2, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
+            graph, batch_size=30, walk_length=2, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
         )
 
         return loader

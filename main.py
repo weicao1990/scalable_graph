@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch_geometric
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
 
+import pandas as pd
+
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TestTubeLogger
 
@@ -143,7 +145,7 @@ class NeighborSampleDataset(IterableDataset):
             for batch_id in range(num_batches):
                 start = batch_id * self.batch_size
                 end = (batch_id + 1) * self.batch_size
-                yield X[indices[start: end]], y[indices[start: end]], g
+                yield X[indices[start: end]], y[indices[start: end]], g, indices[start: end]
 
     def get_length(self):
         length = 0
@@ -193,12 +195,10 @@ class WrapperNet(pl.LightningModule):
         return DataLoader(dataset, batch_size=None)
 
     def train_dataloader(self):
-        if self.hparams.gcn_partition == 'sample':
-            return self.make_sample_dataloader(self.training_input, self.training_target, shuffle=True)
+        return self.make_sample_dataloader(self.training_input, self.training_target, shuffle=True)
 
     def val_dataloader(self):
-        if self.hparams.gcn_partition == 'sample':
-            return self.make_sample_dataloader(self.val_input, self.val_target, shuffle=False)
+        return self.make_sample_dataloader(self.val_input, self.val_target, shuffle=False)
 
     # def test_dataloader(self):
     #     if self.hparams.gcn_partition == 'sample':
@@ -208,7 +208,7 @@ class WrapperNet(pl.LightningModule):
         return self.net(X, g)
 
     def training_step(self, batch, batch_idx):
-        X, y, g = batch
+        X, y, g, rows = batch
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
         loss = loss_criterion(y_hat, y)
@@ -216,18 +216,49 @@ class WrapperNet(pl.LightningModule):
         return {'loss': loss, 'log': {'train_loss': loss}}
 
     def validation_step(self, batch, batch_idx):
-        X, y, g = batch
+        X, y, g, rows = batch
+
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
-        loss = loss_criterion(y_hat, y)
-        return {'loss': loss}
+
+        out_dim = y.size(-1)
+
+        index_ptr = torch.cartesian_prod(
+            torch.arange(rows.size(0)),
+            torch.arange(g['cent_n_id'].size(0)),
+            torch.arange(out_dim)
+        )
+
+        label = pd.DataFrame({
+            'row_idx': rows[index_ptr[:, 0]].data.cpu().numpy(),
+            'node_idx': g['cent_n_id'][index_ptr[:, 1]].data.cpu().numpy(),
+            'feat_idx': index_ptr[:, 2].data.cpu().numpy(),
+            'val': y[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
+        })
+
+        pred = pd.DataFrame({
+            'row_idx': rows[index_ptr[:, 0]].data.cpu().numpy(),
+            'node_idx': g['cent_n_id'][index_ptr[:, 1]].data.cpu().numpy(),
+            'feat_idx': index_ptr[:, 2].data.cpu().numpy(),
+            'val': y_hat[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
+        })
+
+        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        return {'label': label, 'pred': pred}
 
     def validation_epoch_end(self, outputs):
-        tqdm_dict = dict()
-        loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        tqdm_dict['val_loss'] = loss_mean
+        pred = pd.concat([x['pred'] for x in outputs], axis=0)
+        label = pd.concat([x['label'] for x in outputs], axis=0)
 
-        return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
+        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        loss = np.mean((pred.values - label.values) ** 2)
+
+        return {'log': {'val_loss': loss}, 'progress_bar': {'val_loss': loss}}
+
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)

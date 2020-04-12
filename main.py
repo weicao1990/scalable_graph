@@ -183,8 +183,8 @@ class WrapperNet(pl.LightningModule):
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
         loss = loss_criterion(y_hat, y)
-        # loss = (loss * g.node_norm.view(1, -1, 1)).sum()
-        loss = loss.mean()
+        loss = (loss * g.node_norm.view(1, -1, 1)).sum()
+        # loss = loss.mean()
         return {'loss': loss, 'log': {'train_loss': loss}}
 
     # def validation_step(self, batch, batch_idx):

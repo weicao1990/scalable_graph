@@ -125,13 +125,13 @@ class SAGENet(nn.Module):
         # swap node to dim 0
         X = X.permute(1, 0, 2)
 
-        # conv1 = self.conv1(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
-        conv1 = self.conv1(X, g.edge_index, edge_weight=g.edge_attr)
+        conv1 = self.conv1(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
+        # conv1 = self.conv1(X, g.edge_index, edge_weight=g.edge_attr)
 
         X = F.leaky_relu(conv1)
 
-        # conv2 = self.conv2(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
-        conv2 = self.conv2(X, g.edge_index, edge_weight=g.edge_attr)
+        conv2 = self.conv2(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
+        # conv2 = self.conv2(X, g.edge_index, edge_weight=g.edge_attr)
 
         X = F.leaky_relu(conv2)
         X = X.permute(1, 0, 2)

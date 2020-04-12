@@ -67,22 +67,13 @@ class GATNet(nn.Module):
                                out_channels=out_channels, heads=heads, concat=False)
 
     def forward(self, X, g):
-        edge_index = g['edge_index']
-        edge_weight = g['edge_weight']
-
-        size = g['size']
-        res_n_id = g['res_n_id']
-
-        # swap node to dim 0
         X = X.permute(1, 0, 2)
 
-        conv1 = self.conv1(
-            (X, X[res_n_id[0]]), edge_index[0], edge_weight=edge_weight[0], size=size[0])
+        conv1 = self.conv1(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
 
         X = F.leaky_relu(conv1)
 
-        conv2 = self.conv2(
-            (X, X[res_n_id[1]]), edge_index[1], edge_weight=edge_weight[1], size=size[1])
+        conv2 = self.conv2(X, g.edge_index, edge_weight=g.edge_attr * g.edge_norm)
 
         X = F.leaky_relu(conv2)
 

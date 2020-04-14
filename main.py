@@ -275,8 +275,7 @@ if __name__ == '__main__':
     contains_self_loops = torch_geometric.utils.contains_self_loops(edge_index)
     print('Contains self loops: ', contains_self_loops)
     if torch_geometric.utils.contains_self_loops(edge_index):
-        edge_index, edge_weight = torch_geometric.utils.remove_self_loops(
-            edge_index, edge_weight, num_nodes=A.size(0))
+        edge_index, edge_weight = torch_geometric.utils.remove_self_loops(edge_index, edge_weight)
 
     hparams = Namespace(**{
         'num_nodes': A.shape[0],
@@ -301,7 +300,7 @@ if __name__ == '__main__':
     logger = TestTubeLogger(save_dir=log_dir, name=log_name)
 
     trainer = pl.Trainer(
-        gpus=gpus,
+        gpus=[3],
         max_epochs=epochs,
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,

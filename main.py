@@ -187,23 +187,6 @@ class WrapperNet(pl.LightningModule):
         # loss = loss.mean()
         return {'loss': loss, 'log': {'train_loss': loss}}
 
-    # def validation_step(self, batch, batch_idx):
-    #     X, y, g, rows = batch
-    #     g = g.to(X.device)
-    #     y_hat = self(X, g)
-    #     assert(y.size() == y_hat.size())
-    #     loss = loss_criterion(y_hat, y)
-    #     # loss = (loss * g.node_norm.view(1, -1, 1)).sum()
-    #     loss = loss.mean()
-    #     return {'loss': loss}
-
-    # def validation_epoch_end(self, outputs):
-    #     tqdm_dict = dict()
-    #     loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-    #     tqdm_dict['val_loss'] = loss_mean
-
-    #     return {'progress_bar': tqdm_dict, 'log': tqdm_dict}
-
     def validation_step(self, batch, batch_idx):
         X, y, g, rows = batch
 
@@ -280,6 +263,7 @@ if __name__ == '__main__':
     test_input, test_target = generate_dataset(test_original_data,
                                                num_timesteps_input=num_timesteps_input,
                                                num_timesteps_output=num_timesteps_output)
+
     A = torch.from_numpy(A)
     sparse_A = A.to_sparse()
     edge_index = sparse_A._indices()
@@ -290,8 +274,8 @@ if __name__ == '__main__':
 
     contains_self_loops = torch_geometric.utils.contains_self_loops(edge_index)
     print('Contains self loops: ', contains_self_loops)
-    if not torch_geometric.utils.contains_self_loops(edge_index):
-        edge_index, edge_weight = torch_geometric.utils.add_self_loops(
+    if torch_geometric.utils.contains_self_loops(edge_index):
+        edge_index, edge_weight = torch_geometric.utils.remove_self_loops(
             edge_index, edge_weight, num_nodes=A.size(0))
 
     hparams = Namespace(**{
@@ -323,7 +307,6 @@ if __name__ == '__main__':
         early_stop_callback=early_stop_callback,
         logger=logger,
         track_grad_norm=2,
-        train_percent_check=0.01
     )
     trainer.fit(net)
     print('Training time {}'.format(time.time() - start_time))

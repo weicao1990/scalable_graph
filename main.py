@@ -334,7 +334,6 @@ if __name__ == '__main__':
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,
         logger=logger,
-        track_grad_norm=2
     )
     trainer.fit(net)
     print('Training time {}'.format(time.time() - start_time))

@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch_geometric
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
 
-from graph_saint import GraphSAINTRandomWalkSampler
+from graph_saint import GraphSAINTRandomWalkSampler, GraphSAINTNodeSampler
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TestTubeLogger
@@ -39,7 +39,7 @@ parser.add_argument('-m', "--model", choices=['tgcn', 'stgcn', 'gwnet'],
 parser.add_argument('-d', "--dataset", choices=["metr", "nyc-bike"],
                     help='Choose dataset', default='metr')
 parser.add_argument('-t', "--gcn-type", choices=['sage', 'graph', 'gat'],
-                    help='Choose GCN Conv Type', default='graph')
+                    help='Choose GCN Conv Type', default='gat')
 parser.add_argument('-batchsize', type=int, default=32,
                     help='Training batch size')
 parser.add_argument('-epochs', type=int, default=1000,
@@ -95,8 +95,9 @@ class SaintDataset(IterableDataset):
             edge_index=self.edge_index, edge_attr=self.edge_weight, num_nodes=self.num_nodes
         ) .to('cpu')
 
-        loader = GraphSAINTRandomWalkSampler(
-            graph, batch_size=30, walk_length=2, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
+        loader = GraphSAINTNodeSampler(
+            # graph, batch_size=10, walk_length=2, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
+            graph, batch_size=30, num_steps=5, sample_coverage=1000, num_workers=0, sequential_sample=not self.shuffle
         )
 
         return loader
@@ -305,7 +306,6 @@ if __name__ == '__main__':
         distributed_backend='ddp',
         early_stop_callback=early_stop_callback,
         logger=logger,
-        track_grad_norm=2,
     )
     trainer.fit(net)
     print('Training time {}'.format(time.time() - start_time))

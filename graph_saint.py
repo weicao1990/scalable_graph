@@ -43,6 +43,7 @@ class GraphSAINTSampler(object):
         log (bool, optional): If set to :obj:`False`, will not log any
             progress. (default: :obj:`True`)
     """
+
     def __init__(self, data, batch_size, num_steps=1, sample_coverage=50,
                  save_dir=None, num_workers=0, log=True, sequential_sample=False):
         assert data.edge_index is not None
@@ -175,7 +176,7 @@ class GraphSAINTSampler(object):
                 data[key] = item[edge_idx]
             else:
                 data[key] = item
-        
+
         data.node_idx = node_idx
 
         data.node_norm = self.node_norm[node_idx]
@@ -200,7 +201,8 @@ class GraphSAINTSampler(object):
             if self.num_workers > 0:
                 data = self.__data_queue__.get()
             else:
-                sample = self.__sample__(1, sequential=self.sequential_sample)[0]
+                sample = self.__sample__(
+                    1, sequential=self.sequential_sample)[0]
                 data = self.__get_data_from_sample__(sample)
             return data
         else:
@@ -224,11 +226,26 @@ class GraphSAINTNodeSampler(GraphSAINTSampler):
     Args:
         batch_size (int): The number of nodes to sample per batch.
     """
-    def __sample_nodes__(self, num_examples):
-        edge_sample = torch.randint(0, self.E, (num_examples, self.batch_size),
-                                    dtype=torch.long)
+
+    def __sample_nodes__(self, num_examples, count=None):
+        if num_examples > 1:
+            assert count is None
+
+        if count is None:
+            edge_sample = torch.randint(0, self.E, (num_examples, self.batch_size),
+                                        dtype=torch.long)
+        else:
+            edge_sample = torch.arange(
+                (count - 1) * self.batch_size, min(count * self.batch_size, self.E), dtype=torch.long
+            )
+            edge_sample = edge_sample.unsqueeze(dim=0)
+
         node_sample = self.adj.storage.row()[edge_sample]
         return node_sample.unbind(dim=0)
+
+    @property
+    def __num_batches__(self):
+        return (self.N + self.batch_size - 1) // self.batch_size
 
 
 class GraphSAINTEdgeSampler(GraphSAINTSampler):
@@ -238,6 +255,7 @@ class GraphSAINTEdgeSampler(GraphSAINTSampler):
     Args:
         batch_size (int): The number of edges to sample per batch.
     """
+
     def __sample_nodes__(self, num_examples):
         # This function corresponds to the `Edge2` sampler in the official
         # code repository that weights all edges as equally important.
@@ -260,6 +278,7 @@ class GraphSAINTRandomWalkSampler(GraphSAINTSampler):
         batch_size (int): The number of walks to sample per batch.
         walk_length (int): The length of each random walk.
     """
+
     def __init__(self, data, batch_size, walk_length, num_steps=1,
                  sample_coverage=50, save_dir=None, num_workers=0, log=True, sequential_sample=False):
         self.walk_length = walk_length
@@ -277,14 +296,15 @@ class GraphSAINTRandomWalkSampler(GraphSAINTSampler):
             assert count is None
         if count is None:
             start = torch.randint(0, self.N, (num_examples, self.batch_size),
-                                dtype=torch.long)
+                                  dtype=torch.long)
         else:
-            start = torch.arange((count - 1) * self.batch_size, min(count * self.batch_size, self.N), dtype=torch.long)
-            start = start.unsqueeze(dim=0)
+            start = torch.arange((count - 1) * self.batch_size,
+                                 min(count * self.batch_size, self.N), dtype=torch.long)
+            # start = start.unsqueeze(dim=0)
 
         node_sample = self.adj.random_walk(start.flatten(), self.walk_length)
         node_sample = node_sample.view(
-            num_examples, start.size(1)* (self.walk_length + 1))
+            num_examples, start.size(1) * (self.walk_length + 1))
         return node_sample.unbind(dim=0)
 
     @property

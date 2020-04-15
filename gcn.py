@@ -22,6 +22,8 @@ class MyGATConv(PyG.MessagePassing):
         self.u = nn.Parameter(torch.Tensor(out_channels, out_channels))
         self.v = nn.Parameter(torch.Tensor(out_channels, out_channels))
 
+        self.batch_norm = nn.BatchNorm1d(num_features=out_channels)
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -51,6 +53,9 @@ class MyGATConv(PyG.MessagePassing):
 
     def update(self, aggr_out, x):
         aggr_out = torch.matmul(x, self.u) + aggr_out
+        aggr_out = self.batch_norm(aggr_out.permute(1, 2, 0))
+        aggr_out = aggr_out.permute(2, 1, 0)
+
         return x + aggr_out
 
 

@@ -53,8 +53,8 @@ class MyGATConv(PyG.MessagePassing):
 
     def update(self, aggr_out, x):
         aggr_out = torch.matmul(x, self.u) + aggr_out
-        aggr_out = self.batch_norm(aggr_out.permute(1, 2, 0))
-        aggr_out = aggr_out.permute(2, 1, 0)
+        # aggr_out = self.batch_norm(aggr_out.permute(1, 2, 0))
+        # aggr_out = aggr_out.permute(2, 1, 0)
 
         return x + aggr_out
 

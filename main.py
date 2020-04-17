@@ -220,7 +220,7 @@ class WrapperNet(pl.LightningModule):
         y_hat = self(X, g)
         assert(y.size() == y_hat.size())
         loss = loss_criterion(y_hat, y)
-        return {'loss': loss, 'y_hat': y_hat, 'y': y}
+        return {'loss': loss, 'y_hat': y_hat.reshape(-1, ), 'y': y.reshape(-1, )}
 
     def validation_epoch_end(self, outputs):
         tqdm_dict = dict()
@@ -228,8 +228,6 @@ class WrapperNet(pl.LightningModule):
         y_hat = torch.cat([x['y_hat'] for x in outputs], axis=0)
         y = torch.cat([x['y'] for x in outputs], axis=0)
 
-        y_hat = y_hat.view(-1, 1)
-        y = y.view(-1, 1)
         loss_mean = loss_criterion(y_hat, y)
 
         tqdm_dict['val_loss'] = loss_mean

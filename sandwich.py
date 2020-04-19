@@ -48,9 +48,9 @@ class Sandwich(nn.Module):
         super(Sandwich, self).__init__()
         self.gcn_partition = gcn_partition
 
-        self.gru1 = KRNN(num_nodes, num_features, num_timesteps_input, num_timesteps_output=None, hidden_size=hidden_size)
+        self.gru1 = KRNN(num_nodes, num_features, num_timesteps_input, num_timesteps_output=None, hidden_size=num_features)
 
-        self.gcn = GCNBlock(in_channels=hidden_size,
+        self.gcn = GCNBlock(in_channels=num_features,
                             spatial_channels=hidden_size,
                             num_nodes=num_nodes,
                             gcn_type=gcn_type,

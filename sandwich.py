@@ -50,7 +50,7 @@ class Sandwich(nn.Module):
 
         self.gru1 = KRNN(num_nodes, num_features, num_timesteps_input, num_timesteps_output=None, hidden_size=hidden_size)
 
-        self.gcn = GCNBlock(in_channels=num_features,
+        self.gcn = GCNBlock(in_channels=hidden_size,
                             spatial_channels=hidden_size,
                             num_nodes=num_nodes,
                             gcn_type=gcn_type,
@@ -66,7 +66,7 @@ class Sandwich(nn.Module):
         :param A_hat: Normalized adjacency matrix.
         """
         out1 = self.gru1(X, g['graph_n_id'])
-        out2 = self.gcn(X, g)
+        out2 = self.gcn(out1, g)
         out3 = self.gru(out2, g['cent_n_id'])
         out3 = out3.squeeze(dim=-1)
 

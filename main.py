@@ -100,8 +100,8 @@ class NeighborSampleDataset(IterableDataset):
         ) .to('cpu')
 
         graph_sampler = NeighborSampler(
-            # graph, size=[3, 3], num_hops=2, batch_size=50, shuffle=self.shuffle, add_self_loops=True
-            graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[3, 3], num_hops=2, batch_size=50, shuffle=self.shuffle, add_self_loops=True
+            # graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler

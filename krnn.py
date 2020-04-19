@@ -182,6 +182,7 @@ class KSeq2Seq(nn.Module):
             if self.num_timesteps_output is not None:
                 out = out.view(-1, num_nodes, self.num_timesteps_output, 1)
             else:
+                out = out.permute(1, 0, 2)
                 out = out.view(-1, num_nodes, self.num_timesteps_input, self.hidden_size)
 
             outs.append(out.unsqueeze(dim=-1))

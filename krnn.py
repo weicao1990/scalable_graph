@@ -131,8 +131,12 @@ class Seq2Seq(nn.Module):
 
         self.encoder = Encoder(
             num_features, num_timesteps_input, hidden_size, overlap_size, use_pos_encode)
-        self.decoder = Decoder(
-            num_features, num_timesteps_output, hidden_size, overlap_size, use_pos_encode)
+        
+        if num_timesteps_output is not None:
+            self.decoder = Decoder(
+                num_features, num_timesteps_output, hidden_size, overlap_size, use_pos_encode)
+        else:
+            self.decoder = None
 
     def forward(self, X):
         '''
@@ -142,16 +146,20 @@ class Seq2Seq(nn.Module):
 
         encoder_hid = encoder_hid.squeeze(dim=0)
 
-        decoder_out = self.decoder(encoder_out, encoder_hid, last)
-
-        return decoder_out
+        if self.decoder is not None:
+            decoder_out = self.decoder(encoder_out, encoder_hid, last)
+            return decoder_out
+        else:
+            return encoder_out
 
 
 class KSeq2Seq(nn.Module):
     def __init__(self, num_nodes, num_features, num_timesteps_input, num_timesteps_output, hidden_size, overlap_size, use_pos_encode, parallel):
         super(KSeq2Seq, self).__init__()
 
+        self.num_timesteps_input = num_timesteps_input
         self.num_timesteps_output = num_timesteps_output
+        self.hidden_size = hidden_size
 
         self.module_list = nn.ModuleList()
         for rep in range(parallel):
@@ -161,8 +169,6 @@ class KSeq2Seq(nn.Module):
             )
         
         self.attn = nn.Embedding(num_nodes, parallel)
-        # self.attn = nn.Parameter(torch.FloatTensor(num_nodes, parallel))
-        # self.attn.data.normal_()
 
     def forward(self, X, n_id):
         # reshape to (batch_size * num_nodes, num_timesteps_input, num_features)
@@ -173,7 +179,10 @@ class KSeq2Seq(nn.Module):
 
         for idx in range(len(self.module_list)):
             out = self.module_list[idx](inputs)
-            out = out.view(-1, num_nodes, self.num_timesteps_output)
+            if self.num_timesteps_output is not None:
+                out = out.view(-1, num_nodes, self.num_timesteps_output, 1)
+            else:
+                out = out.view(-1, num_nodes, self.num_timesteps_input, self.hidden_size)
 
             outs.append(out.unsqueeze(dim=-1))
 
@@ -182,7 +191,7 @@ class KSeq2Seq(nn.Module):
         attn = self.attn(n_id)
         attn = torch.softmax(attn, dim=-1)
 
-        outs = torch.einsum('ijkl,jl->ijk', outs, attn)
+        outs = torch.einsum('ijklm,jm->ijkl', outs, attn)
 
         return outs
 
@@ -191,7 +200,7 @@ class KRNN(nn.Module):
     def __init__(self, num_nodes, num_features, num_timesteps_input,
                  num_timesteps_output, hidden_size=64, overlap_size=3, use_pos_encode=False, parallel=10):
         super(KRNN, self).__init__()
-
+        # set num_timesteps_output as None for only return encoder output
         self.seq2seq = KSeq2Seq(num_nodes, num_features, num_timesteps_input, num_timesteps_output,
                                 hidden_size, overlap_size, use_pos_encode, parallel)
 

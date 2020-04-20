@@ -55,7 +55,7 @@ class Encoder(nn.Module):
         inputs = inputs.permute(1, 0, 2)
         encode_inputs = encode_inputs.permute(1, 0, 2)
 
-        out, hidden = self.rnn(encode_inputs)
+        out, _ = self.rnn(encode_inputs)
 
         # extract last input of encoder, used for decoder
         # 0 indicates target dim
@@ -63,7 +63,7 @@ class Encoder(nn.Module):
                            self.overlap_size, self.num_features
                            )[-1, :, :, 0]
 
-        return out, hidden, last.detach()
+        return out, last.detach()
 
 
 class Decoder(nn.Module):
@@ -89,7 +89,6 @@ class Decoder(nn.Module):
         :param encoder_hid: (batch_size, hidden_size)
         :param last: shape (batch_size, overlap_size)
         '''
-
         decoder_out = []
 
         hidden = encoder_hid
@@ -125,34 +124,6 @@ class Decoder(nn.Module):
         return decoder_out
 
 
-class Seq2Seq(nn.Module):
-    def __init__(self, num_features, num_timesteps_input, num_timesteps_output, hidden_size, overlap_size, use_pos_encode):
-        super(Seq2Seq, self).__init__()
-
-        self.encoder = Encoder(
-            num_features, num_timesteps_input, hidden_size, overlap_size, use_pos_encode)
-        
-        if num_timesteps_output is not None:
-            self.decoder = Decoder(
-                num_features, num_timesteps_output, hidden_size, overlap_size, use_pos_encode)
-        else:
-            self.decoder = None
-
-    def forward(self, X):
-        '''
-        :param: X of shape (batch_size, num_timesteps_input, num_features)
-        '''
-        encoder_out, encoder_hid, last = self.encoder(X)
-
-        encoder_hid = encoder_hid.squeeze(dim=0)
-
-        if self.decoder is not None:
-            decoder_out = self.decoder(encoder_out, encoder_hid, last)
-            return decoder_out
-        else:
-            return encoder_out
-
-
 class KSeq2Seq(nn.Module):
     def __init__(self, num_nodes, num_features, num_timesteps_input, num_timesteps_output, hidden_size, overlap_size, use_pos_encode, parallel):
         super(KSeq2Seq, self).__init__()
@@ -161,14 +132,22 @@ class KSeq2Seq(nn.Module):
         self.num_timesteps_output = num_timesteps_output
         self.hidden_size = hidden_size
 
-        self.module_list = nn.ModuleList()
+        self.encoder_list = nn.ModuleList()
         for rep in range(parallel):
-            self.module_list.append(
-                Seq2Seq(num_features, num_timesteps_input, num_timesteps_output,
-                        hidden_size, overlap_size, use_pos_encode)
+            self.encoder_list.append(
+                Encoder(num_features, num_timesteps_input,
+                        hidden_size, overlap_size, use_pos_encode
+                        )
             )
-        
+
         self.attn = nn.Embedding(num_nodes, parallel)
+
+        if num_timesteps_output is not None:
+            self.decoder = Decoder(
+                num_features, num_timesteps_output, hidden_size, overlap_size, use_pos_encode
+            )
+        else:
+            self.decoder = None
 
     def forward(self, X, n_id):
         # reshape to (batch_size * num_nodes, num_timesteps_input, num_features)
@@ -177,13 +156,11 @@ class KSeq2Seq(nn.Module):
 
         outs = []
 
-        for idx in range(len(self.module_list)):
-            out = self.module_list[idx](inputs)
-            if self.num_timesteps_output is not None:
-                out = out.view(-1, num_nodes, self.num_timesteps_output, 1)
-            else:
-                out = out.permute(1, 0, 2)
-                out = out.view(-1, num_nodes, self.num_timesteps_input, self.hidden_size)
+        for idx in range(len(self.encoder_list)):
+            out, last = self.encoder_list[idx](inputs)
+            out = out.permute(1, 0, 2)
+            out = out.view(-1, num_nodes,
+                           self.num_timesteps_input, self.hidden_size)
 
             outs.append(out.unsqueeze(dim=-1))
 
@@ -192,9 +169,21 @@ class KSeq2Seq(nn.Module):
         attn = self.attn(n_id)
         attn = torch.softmax(attn, dim=-1)
 
-        outs = torch.einsum('ijklm,jm->ijkl', outs, attn)
+        encoder_out = torch.einsum('ijklm,jm->ijkl', outs, attn)
 
-        return outs
+        if self.decoder is None:
+            return encoder_out
+        else:
+            encoder_out = encoder_out.reshape(
+                -1, encoder_out.size(2), encoder_out.size(3)
+            )
+            encoder_out = encoder_out.permute(1, 0, 2)
+
+            encoder_hid = encoder_out[-1]
+
+            decoder_out = self.decoder(encoder_out, encoder_hid, last)
+
+            return decoder_out.view(-1, X.size(1), self.num_timesteps_output)
 
 
 class KRNN(nn.Module):

@@ -14,8 +14,11 @@ class Encoder(nn.Module):
         self.overlap_size = overlap_size
         self.use_pos_encode = use_pos_encode
 
-        self.register_buffer('position', torch.arange(num_timesteps_input))
-        self.pos_encode = nn.Embedding(num_timesteps_input, 4)
+        if self.use_pos_encode:
+            # required by DistributedDataParallel
+            # if we do not use some parameters, we do not initialize them either
+            self.register_buffer('position', torch.arange(num_timesteps_input))
+            self.pos_encode = nn.Embedding(num_timesteps_input, 4)
 
         rnn_input_size = num_features * overlap_size + \
             4 * int(use_pos_encode)
@@ -32,6 +35,7 @@ class Encoder(nn.Module):
         return torch.cat(overlap_inputs, dim=2)
 
     def add_position_encode(self, inputs):
+        assert self.use_pos_encode
         pos_encode = self.pos_encode(self.position)
         pos_encode = pos_encode.expand(
             (inputs.size(0), ) + pos_encode.size()
@@ -76,7 +80,10 @@ class Decoder(nn.Module):
         self.num_timesteps_output = num_timesteps_output
 
         self.register_buffer('position', torch.arange(num_timesteps_output))
-        self.pos_encode = nn.Embedding(num_timesteps_output, 4)
+        if self.use_pos_encode:
+            # required by DistributedDataParallel
+            # if we do not use some parameters, we do not initialize them either
+            self.pos_encode = nn.Embedding(num_timesteps_output, 4)
 
         rnn_input_size = overlap_size + 4 * int(use_pos_encode)
 
@@ -94,10 +101,13 @@ class Decoder(nn.Module):
 
         hidden = encoder_hid
 
-        pos_encode = self.pos_encode(self.position)
-        pos_encode = pos_encode.expand(
-            (encoder_hid.size(0), ) + pos_encode.size()
-        )
+        if self.use_pos_encode:
+            pos_encode = self.pos_encode(self.position)
+            pos_encode = pos_encode.expand(
+                (encoder_hid.size(0), ) + pos_encode.size()
+            )
+        else:
+            pos_encode = None
 
         for step in range(self.num_timesteps_output):
             attn_w = torch.einsum('ijk,jk->ij', encoder_out, hidden)
@@ -159,7 +169,7 @@ class KSeq2Seq(nn.Module):
                 Seq2Seq(num_features, num_timesteps_input, num_timesteps_output,
                         hidden_size, overlap_size, use_pos_encode)
             )
-        
+
         self.attn = nn.Embedding(num_nodes, parallel)
         # self.attn = nn.Parameter(torch.FloatTensor(num_nodes, parallel))
         # self.attn.data.normal_()

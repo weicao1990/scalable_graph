@@ -102,7 +102,6 @@ class MyGATConv(PyG.MessagePassing):
         self.u = nn.Parameter(torch.Tensor(out_channels, out_channels))
         self.v = nn.Parameter(torch.Tensor(out_channels, out_channels))
 
-        self.batch_norm = nn.BatchNorm1d(num_features=out_channels)
         self.layer_norm = nn.LayerNorm(normalized_shape=out_channels)
 
         self.reset_parameters()
@@ -138,9 +137,11 @@ class MyGATConv(PyG.MessagePassing):
     def update(self, aggr_out, x):
         x = x[1]
         aggr_out = torch.matmul(x, self.u) + aggr_out
-        # aggr_out = self.batch_norm(aggr_out.permute(1, 2, 0))
-        # aggr_out = aggr_out.permute(2, 0, 1)
-        aggr_out = self.layer_norm(aggr_out)
+
+        mean = aggr_out.view(aggr_out.size(0), -1).mean(dim=1).view(-1, 1, 1)
+        std = aggr_out.view(aggr_out.size(0), -1).std(dim=1).view(-1, 1, 1)
+
+        aggr_out = (aggr_out - mean) / (std + 1e-5)
 
         return x + aggr_out
 

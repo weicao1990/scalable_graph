@@ -234,21 +234,20 @@ class SpatialTemporalTask(BasePytorchTask):
         self.edge_index = self.sparse_A._indices()
         self.edge_weight = self.sparse_A._values()
 
-        # set config attributes for model initialization
-        self.config.num_nodes = self.A.shape[0]
-        self.config.num_edges = self.edge_weight.shape[0]
-        self.config.num_features = self.training_input.shape[3]
-
-        self.log('Total nodes: {}'.format(self.A.size(0)))
-        self.log('Average degree: {:.3f}'.format(self.edge_index.size(1) / self.A.size(0)))
-
         contains_self_loops = torch_geometric.utils.contains_self_loops(self.edge_index)
-        self.log('Contains self loops: {}'.format(contains_self_loops))
+        self.log('Contains self loops: {}, but we add them.'.format(contains_self_loops))
         if not contains_self_loops:
             self.edge_index, self.edge_weight = torch_geometric.utils.add_self_loops(
                 self.edge_index, self.edge_weight,
                 num_nodes=self.config.num_nodes
             )
+
+        # set config attributes for model initialization
+        self.config.num_nodes = self.A.shape[0]
+        self.config.num_edges = self.edge_weight.shape[0]
+        self.config.num_features = self.training_input.shape[3]
+        self.log('Total nodes: {}'.format(self.config.num_nodes))
+        self.log('Average degree: {:.3f}'.format(self.config.num_edges / self.config.num_nodes))
 
     def make_sample_dataloader(self, X, y, shuffle=False, use_dist_sampler=False):
         # return a data loader based on neighbor sampling

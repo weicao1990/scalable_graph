@@ -123,7 +123,8 @@ class NeighborSampleDataset(IterableDataset):
         graph['res_n_id'] = [
             data_flow[i].res_n_id.to(device) for i in range(layers)
         ]
-        graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1].res_n_id].to(device)
+        graph['cent_n_id'] = data_flow[-1].n_id[data_flow[-1]
+                                                .res_n_id].to(device)
 
         graph['graph_n_id'] = data_flow[0].n_id
 
@@ -201,10 +202,6 @@ class WrapperNet(pl.LightningModule):
     def val_dataloader(self):
         return self.make_sample_dataloader(self.val_input, self.val_target, shuffle=False)
 
-    # def test_dataloader(self):
-    #     if self.hparams.gcn_partition == 'sample':
-    #         return self.make_sample_dataloader(self.test_input, self.test_target, shuffle=False)
-
     def forward(self, X, g):
         return self.net(X, g)
 
@@ -259,7 +256,6 @@ class WrapperNet(pl.LightningModule):
         loss = np.mean((pred.values - label.values) ** 2)
 
         return {'log': {'val_loss': loss}, 'progress_bar': {'val_loss': loss}}
-
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)

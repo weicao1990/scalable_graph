@@ -142,7 +142,9 @@ class MyGATConv(PyG.MessagePassing):
         # aggr_out = aggr_out.permute(2, 0, 1)
         aggr_out = self.layer_norm(aggr_out)
 
-        return x + aggr_out
+        return aggr_out
+
+        # return x + aggr_out
 
 
 class GATNet(nn.Module):

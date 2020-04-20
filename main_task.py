@@ -239,7 +239,7 @@ class SpatialTemporalTask(BasePytorchTask):
         if not contains_self_loops:
             self.edge_index, self.edge_weight = torch_geometric.utils.add_self_loops(
                 self.edge_index, self.edge_weight,
-                num_nodes=self.config.num_nodes
+                num_nodes=self.A.shape[0]
             )
 
         # set config attributes for model initialization

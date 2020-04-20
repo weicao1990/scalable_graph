@@ -142,6 +142,7 @@ class MyGATConv(PyG.MessagePassing):
         std = aggr_out.view(aggr_out.size(0), -1).std(dim=1).view(-1, 1, 1)
 
         aggr_out = (aggr_out - mean) / (std + 1e-5)
+        aggr_out = self.layer_norm(aggr_out)
 
         return x + aggr_out
 

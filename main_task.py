@@ -36,7 +36,7 @@ class STConfig(BaseConfig):
         self.gcn = 'sage'  # choices: sage, gat
         self.gcn_package = 'ours'  # choices: pyg, ours
         self.gcn_partition = 'none'  # choices: none, cluster, sample
-        self.batch_size = 16  # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
+        self.batch_size = 32  # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.loss = 'mse'  # choices: mse, mae
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence

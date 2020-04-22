@@ -101,7 +101,7 @@ class NeighborSampleDataset(IterableDataset):
         return sub_graph
 
     def __iter__(self):
-        if self.use_dist_sampler:
+        if self.use_dist_sampler and dist.is_initialized():
             # ensure that all processes share the same graph dataflow
             torch.manual_seed(self.epoch)
 

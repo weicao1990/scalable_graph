@@ -42,6 +42,7 @@ class STConfig(BaseConfig):
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
+        self.use_dist_sampler = True
 
 
 def get_model_class(model):

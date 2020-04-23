@@ -89,7 +89,7 @@ class GatedGCNNet(nn.Module):
         return X
 
 class MyGATConv(PyG.MessagePassing):
-    def __init__(self, in_channels, out_channels, edge_channels=1, **kwargs):
+    def __init__(self, in_channels, out_channels, edge_channels=1, normalize='none', **kwargs):
         super(MyGATConv, self).__init__(aggr='mean', **kwargs)
 
         self.in_channels = in_channels
@@ -102,7 +102,12 @@ class MyGATConv(PyG.MessagePassing):
         self.u = nn.Parameter(torch.Tensor(out_channels, out_channels))
         self.v = nn.Parameter(torch.Tensor(out_channels, out_channels))
 
-        self.batch_norm = nn.BatchNorm1d(out_channels)
+        self.normalize = normalize
+
+        if normalize == 'bn':
+            self.batch_norm = nn.BatchNorm1d(out_channels)
+        if normalize == 'ln':
+            self.layer_norm = nn.LayerNorm(out_channels)
 
         self.reset_parameters()
 
@@ -138,18 +143,26 @@ class MyGATConv(PyG.MessagePassing):
         x = x[1]
         aggr_out = torch.matmul(x, self.u) + aggr_out
 
-        aggr_out = aggr_out.permute(0, 2, 1)
-        aggr_out = self.batch_norm(aggr_out)
-        aggr_out = aggr_out.permute(0, 2, 1)
+        if self.normalize == 'bn':
+            aggr_out = aggr_out.permute(0, 2, 1)
+            aggr_out = self.batch_norm(aggr_out)
+            aggr_out = aggr_out.permute(0, 2, 1)
+        elif self.normalize == 'ln':
+            aggr_out = self.layer_norm(aggr_out)
+        elif self.normalize == 'vn':
+            mean = aggr_out.view(aggr_out.size(0), -1).mean(dim=1).view(-1, 1, 1)
+            std = aggr_out.view(aggr_out.size(0), -1).std(dim=1).view(-1, 1, 1)
+            aggr_out = (aggr_out - mean) / (std + 1e-5)
+
 
         return x + aggr_out
 
 
 class GATNet(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, normalize):
         super(GATNet, self).__init__()
-        self.conv1 = MyGATConv(in_channels=in_channels, out_channels=16)
-        self.conv2 = MyGATConv(in_channels=16, out_channels=out_channels)
+        self.conv1 = MyGATConv(in_channels=in_channels, out_channels=16, normalize=normalize)
+        self.conv2 = MyGATConv(in_channels=16, out_channels=out_channels, normalize=normalize)
 
     def forward(self, X, g):
         edge_index = g['edge_index']
@@ -204,7 +217,7 @@ class MySAGEConv(PyG.SAGEConv):
 
 
 class SAGENet(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, **kwargs):
         super(SAGENet, self).__init__()
         self.conv1 = MySAGEConv(
             in_channels, 16, normalize=False, concat=True)

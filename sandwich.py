@@ -9,12 +9,14 @@ from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, Clust
 
 
 class GCNBlock(nn.Module):
-    def __init__(self, in_channels, spatial_channels, num_nodes, gcn_type):
+    def __init__(self, in_channels, spatial_channels, num_nodes, gcn_type, normalize):
         super(GCNBlock, self).__init__()
         GCNUnit = {'sage': SAGENet, 'gat': GATNet,
                    'gated': GatedGCNNet}.get(gcn_type)
         self.gcn = GCNUnit(in_channels=in_channels,
-                           out_channels=spatial_channels)
+                           out_channels=spatial_channels,
+                           normalize=normalize
+                           )
 
     def forward(self, X, g):
         """
@@ -36,7 +38,7 @@ class GCNBlock(nn.Module):
 class Sandwich(nn.Module):
     def __init__(self, num_nodes, num_edges, num_features,
                  num_timesteps_input, num_timesteps_output,
-                 gcn_type='sage', hidden_size=64, **kwargs):
+                 gcn_type='sage', hidden_size=64, normalize='none', **kwargs):
         """
         :param num_nodes: Number of nodes in the graph.
         :param num_features: Number of features at each node in each time step.
@@ -53,7 +55,8 @@ class Sandwich(nn.Module):
         self.gcn = GCNBlock(in_channels=hidden_size,
                             spatial_channels=hidden_size,
                             num_nodes=num_nodes,
-                            gcn_type=gcn_type
+                            gcn_type=gcn_type,
+                            normalize=normalize
                             )
 
         self.gru = KRNN(num_nodes, hidden_size, num_timesteps_input,

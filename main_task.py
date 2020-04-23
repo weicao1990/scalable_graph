@@ -39,10 +39,12 @@ class STConfig(BaseConfig):
         self.gcn = 'gat'  # choices: sage, gat
         # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.batch_size = 32
+        self.normalize = 'none'
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
-        self.use_dist_sampler = True
+
+        self.rep_eval = 3  # do evaluation for multiple times
 
 
 def get_model_class(model):
@@ -53,7 +55,7 @@ def get_model_class(model):
 
 
 class NeighborSampleDataset(IterableDataset):
-    def __init__(self, X, y, edge_index, edge_weight, num_nodes, batch_size, shuffle=False, use_dist_sampler=False):
+    def __init__(self, X, y, edge_index, edge_weight, num_nodes, batch_size, shuffle=False, use_dist_sampler=False, rep_eval=None):
         self.X = X
         self.y = y
 
@@ -66,6 +68,9 @@ class NeighborSampleDataset(IterableDataset):
         self.use_dist_sampler = use_dist_sampler
         # use 'epoch' as the random seed to shuffle data for distributed training
         self.epoch = None
+
+        # number of repeats to run evaluation, set to None for training mode
+        self.rep_eval = rep_eval
 
         self.graph_sampler = self._make_graph_sampler()
         self.length = self.get_length()
@@ -95,61 +100,71 @@ class NeighborSampleDataset(IterableDataset):
         return sub_graph
 
     def __iter__(self):
-        if self.use_dist_sampler and dist.is_initialized():
-            # ensure that all processes share the same graph dataflow
-            torch.manual_seed(self.epoch)
+        repeats = 1 if self.rep_eval is None else self.rep_eval
 
-        for data_flow in self.graph_sampler():
-            g = self.get_subgraph(data_flow)
-            X, y = self.X[:, g['graph_n_id']], self.y[:, g['cent_n_id']]
-            dataset_len = X.size(0)
-            indices = list(range(dataset_len))
+        for rep in range(repeats):
+            seed = self.epoch if self.rep_eval is None else rep
 
             if self.use_dist_sampler and dist.is_initialized():
-                # distributed sampler reference: torch.utils.data.distributed.DistributedSampler
-                if self.shuffle:
-                    # ensure that all processes share the same permutated indices
-                    tg = torch.Generator()
-                    tg.manual_seed(self.epoch)
-                    indices = torch.randperm(
-                        dataset_len, generator=tg).tolist()
+                # ensure that all processes share the same graph dataflow
+                # set seed as epoch for training, and rep for evaluation
+                torch.manual_seed(seed)
 
-                world_size = dist.get_world_size()
-                node_rank = dist.get_rank()
-                num_samples_per_node = int(
-                    math.ceil(dataset_len * 1.0 / world_size))
-                total_size = world_size * num_samples_per_node
+            for data_flow in self.graph_sampler():
+                g = self.get_subgraph(data_flow)
+                X, y = self.X[:, g['graph_n_id']], self.y[:, g['cent_n_id']]
+                dataset_len = X.size(0)
+                indices = list(range(dataset_len))
 
-                # add extra samples to make it evenly divisible
-                indices += indices[:(total_size - dataset_len)]
-                assert len(indices) == total_size
+                if self.use_dist_sampler and dist.is_initialized():
+                    # distributed sampler reference: torch.utils.data.distributed.DistributedSampler
+                    if self.shuffle:
+                        # ensure that all processes share the same permutated indices
+                        tg = torch.Generator()
+                        tg.manual_seed(seed)
+                        indices = torch.randperm(
+                            dataset_len, generator=tg).tolist()
 
-                # get sub-batch for each process
-                # Node (rank=x) get [x, x+world_size, x+2*world_size, ...]
-                indices = indices[node_rank:total_size:world_size]
-                assert len(indices) == num_samples_per_node
-            elif self.shuffle:
-                np.random.shuffle(indices)
+                    world_size = dist.get_world_size()
+                    node_rank = dist.get_rank()
+                    num_samples_per_node = int(
+                        math.ceil(dataset_len * 1.0 / world_size))
+                    total_size = world_size * num_samples_per_node
 
-            num_batches = (len(indices) + self.batch_size -
-                           1) // self.batch_size
-            for batch_id in range(num_batches):
-                start = batch_id * self.batch_size
-                end = (batch_id + 1) * self.batch_size
-                yield X[indices[start: end]], y[indices[start: end]], g, torch.LongTensor(indices[start: end])
+                    # add extra samples to make it evenly divisible
+                    indices += indices[:(total_size - dataset_len)]
+                    assert len(indices) == total_size
+
+                    # get sub-batch for each process
+                    # Node (rank=x) get [x, x+world_size, x+2*world_size, ...]
+                    indices = indices[node_rank:total_size:world_size]
+                    assert len(indices) == num_samples_per_node
+                elif self.shuffle:
+                    np.random.shuffle(indices)
+
+                num_batches = (len(indices) + self.batch_size -
+                            1) // self.batch_size
+                for batch_id in range(num_batches):
+                    start = batch_id * self.batch_size
+                    end = (batch_id + 1) * self.batch_size
+                    yield X[indices[start: end]], y[indices[start: end]], g, torch.LongTensor(indices[start: end])
 
     def get_length(self):
         length = 0
-        for data_flow in self.graph_sampler():
-            if self.use_dist_sampler and dist.is_initialized():
-                dataset_len = self.X.size(0)
-                world_size = dist.get_world_size()
-                num_samples_per_node = int(
-                    math.ceil(dataset_len * 1.0 / world_size))
-            else:
-                num_samples_per_node = self.X.size(0)
-            length += (num_samples_per_node +
-                       self.batch_size - 1) // self.batch_size
+
+        repeats = 1 if self.rep_eval is None else self.rep_eval
+
+        for rep in range(repeats):
+            for data_flow in self.graph_sampler():
+                if self.use_dist_sampler and dist.is_initialized():
+                    dataset_len = self.X.size(0)
+                    world_size = dist.get_world_size()
+                    num_samples_per_node = int(
+                        math.ceil(dataset_len * 1.0 / world_size))
+                else:
+                    num_samples_per_node = self.X.size(0)
+                length += (num_samples_per_node +
+                        self.batch_size - 1) // self.batch_size
 
         return length
 
@@ -173,7 +188,8 @@ class WrapperNet(nn.Module):
             config.num_features,
             config.num_timesteps_input,
             config.num_timesteps_output,
-            config.gcn
+            config.gcn,
+            normalize=config.normalize
         )
         self.register_buffer('edge_index', torch.LongTensor(
             2, config.num_edges))
@@ -248,26 +264,26 @@ class SpatialTemporalTask(BasePytorchTask):
         self.log('Average degree: {:.3f}'.format(
             self.config.num_edges / self.config.num_nodes))
 
-    def make_sample_dataloader(self, X, y, shuffle=False, use_dist_sampler=False):
+    def make_sample_dataloader(self, X, y, batch_size, shuffle=False, use_dist_sampler=False, rep_eval=None):
         # return a data loader based on neighbor sampling
-        # TODO: impl. distributed dataloader
         dataset = NeighborSampleDataset(
-            X, y, self.edge_index, self.edge_weight, self.config.num_nodes, self.config.batch_size,
-            shuffle=shuffle, use_dist_sampler=use_dist_sampler
+            X, y, self.edge_index, self.edge_weight, self.config.num_nodes, batch_size,
+            shuffle=shuffle, use_dist_sampler=use_dist_sampler, rep_eval=rep_eval
         )
 
         return DataLoader(dataset, batch_size=None)
 
     def build_train_dataloader(self):
         return self.make_sample_dataloader(
-            self.training_input, self.training_target, shuffle=True, use_dist_sampler=True
+            self.training_input, self.training_target, batch_size=self.config.batch_size, shuffle=True, use_dist_sampler=True
         )
 
     def build_val_dataloader(self):
-        return self.make_sample_dataloader(self.val_input, self.val_target)
+        # use a small batch size to test the normalization methods (BN/LN)
+        return self.make_sample_dataloader(self.val_input, self.val_target, batch_size=8, rep_eval=self.config.rep_eval)
 
     def build_test_dataloader(self):
-        return self.make_sample_dataloader(self.test_input, self.test_target)
+        return self.make_sample_dataloader(self.test_input, self.test_target, batch_size=8, rep_eval=self.config.rep_eval)
 
     def build_optimizer(self, model):
         return torch.optim.Adam(self.model.parameters(), lr=self.config.lr)
@@ -363,7 +379,6 @@ if __name__ == '__main__':
     config = STConfig()
     parser = argparse.ArgumentParser(description='Spatial-Temporal-Task')
     add_config_to_argparse(config, parser)
-
 
     # parse arguments to config
     args = parser.parse_args()

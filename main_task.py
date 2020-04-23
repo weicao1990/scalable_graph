@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from tgcn import TGCN
+from sandwich import Sandwich
+
 from preprocess import generate_dataset, load_nyc_sharing_bike_data, load_metr_la_data, get_normalized_adj
 from base_task import add_config_to_argparse, BaseConfig, BasePytorchTask, \
     LOSS_KEY, BAR_KEY, SCALAR_LOG_KEY, VAL_SCORE_KEY
@@ -30,14 +32,13 @@ class STConfig(BaseConfig):
         self.early_stop_epochs = 30
 
         # 2. set spatial-temporal config variables:
-        self.model = 'tgcn'  # choices: tgcn, stgcn, gwnet
+        self.model = 'sandwich'  # choices: tgcn, stgcn, gwnet
         self.dataset = 'metr'  # choices: metr, nyc
-        self.data_dir = './data/METR-LA'  # choices: ./data/METR-LA, ./data/NYC-Sharing-Bike
-        self.gcn = 'sage'  # choices: sage, gat
-        self.gcn_package = 'ours'  # choices: pyg, ours
-        self.gcn_partition = 'none'  # choices: none, cluster, sample
-        self.batch_size = 32  # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
-        self.loss = 'mse'  # choices: mse, mae
+        # choices: ./data/METR-LA, ./data/NYC-Sharing-Bike
+        self.data_dir = './data/METR-LA'
+        self.gcn = 'gat'  # choices: sage, gat
+        # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
+        self.batch_size = 32
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
@@ -46,16 +47,8 @@ class STConfig(BaseConfig):
 def get_model_class(model):
     return {
         'tgcn': TGCN,
-        # 'stgcn': STGCN,
-        # 'gwnet': GWNET,
+        'sandwich': Sandwich
     }.get(model)
-
-
-def get_loss_func(loss):
-    return {
-        'mse': nn.MSELoss(),
-        'mae': nn.L1Loss(),
-    }.get(loss)
 
 
 class NeighborSampleDataset(IterableDataset):
@@ -117,11 +110,13 @@ class NeighborSampleDataset(IterableDataset):
                     # ensure that all processes share the same permutated indices
                     tg = torch.Generator()
                     tg.manual_seed(self.epoch)
-                    indices = torch.randperm(dataset_len, generator=tg).tolist()
+                    indices = torch.randperm(
+                        dataset_len, generator=tg).tolist()
 
                 world_size = dist.get_world_size()
                 node_rank = dist.get_rank()
-                num_samples_per_node = int(math.ceil(dataset_len * 1.0 / world_size))
+                num_samples_per_node = int(
+                    math.ceil(dataset_len * 1.0 / world_size))
                 total_size = world_size * num_samples_per_node
 
                 # add extra samples to make it evenly divisible
@@ -135,7 +130,8 @@ class NeighborSampleDataset(IterableDataset):
             elif self.shuffle:
                 np.random.shuffle(indices)
 
-            num_batches = (len(indices) + self.batch_size - 1) // self.batch_size
+            num_batches = (len(indices) + self.batch_size -
+                           1) // self.batch_size
             for batch_id in range(num_batches):
                 start = batch_id * self.batch_size
                 end = (batch_id + 1) * self.batch_size
@@ -147,10 +143,12 @@ class NeighborSampleDataset(IterableDataset):
             if self.use_dist_sampler and dist.is_initialized():
                 dataset_len = self.X.size(0)
                 world_size = dist.get_world_size()
-                num_samples_per_node = int(math.ceil(dataset_len * 1.0 / world_size))
+                num_samples_per_node = int(
+                    math.ceil(dataset_len * 1.0 / world_size))
             else:
                 num_samples_per_node = self.X.size(0)
-            length += (num_samples_per_node + self.batch_size - 1) // self.batch_size
+            length += (num_samples_per_node +
+                       self.batch_size - 1) // self.batch_size
 
         return length
 
@@ -168,15 +166,13 @@ class WrapperNet(nn.Module):
 
         self.config = config
         model_class = get_model_class(config.model)
-        gcn_partition = None if config.gcn_partition is 'none' else config.gcn_partition
         self.net = model_class(
             config.num_nodes,
             config.num_edges,
             config.num_features,
             config.num_timesteps_input,
             config.num_timesteps_output,
-            config.gcn,
-            gcn_partition
+            config.gcn
         )
         self.register_buffer('edge_index', torch.LongTensor(
             2, config.num_edges))
@@ -197,12 +193,11 @@ class SpatialTemporalTask(BasePytorchTask):
         self.log('Intialize {}'.format(self.__class__))
 
         self.init_data()
-        self.loss_func = get_loss_func(config.loss)
+        self.loss_func = nn.MSELoss()
 
         self.log('Config:\n{}'.format(
             json.dumps(self.config.to_dict(), ensure_ascii=False, indent=4)
         ))
-
 
     def init_data(self, data_dir=None):
         if data_dir is None:
@@ -220,22 +215,24 @@ class SpatialTemporalTask(BasePytorchTask):
         test_original_data = X[:, :, split_line2:]
 
         self.training_input, self.training_target = generate_dataset(train_original_data,
-            num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
-        )
+                                                                     num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
+                                                                     )
         self.val_input, self.val_target = generate_dataset(val_original_data,
-            num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
-        )
+                                                           num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
+                                                           )
         self.test_input, self.test_target = generate_dataset(test_original_data,
-            num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
-        )
+                                                             num_timesteps_input=self.config.num_timesteps_input, num_timesteps_output=self.config.num_timesteps_output
+                                                             )
 
         self.A = torch.from_numpy(A)
         self.sparse_A = self.A.to_sparse()
         self.edge_index = self.sparse_A._indices()
         self.edge_weight = self.sparse_A._values()
 
-        contains_self_loops = torch_geometric.utils.contains_self_loops(self.edge_index)
-        self.log('Contains self loops: {}, but we add them.'.format(contains_self_loops))
+        contains_self_loops = torch_geometric.utils.contains_self_loops(
+            self.edge_index)
+        self.log('Contains self loops: {}, but we add them.'.format(
+            contains_self_loops))
         if not contains_self_loops:
             self.edge_index, self.edge_weight = torch_geometric.utils.add_self_loops(
                 self.edge_index, self.edge_weight,
@@ -247,7 +244,8 @@ class SpatialTemporalTask(BasePytorchTask):
         self.config.num_edges = self.edge_weight.shape[0]
         self.config.num_features = self.training_input.shape[3]
         self.log('Total nodes: {}'.format(self.config.num_nodes))
-        self.log('Average degree: {:.3f}'.format(self.config.num_edges / self.config.num_nodes))
+        self.log('Average degree: {:.3f}'.format(
+            self.config.num_edges / self.config.num_nodes))
 
     def make_sample_dataloader(self, X, y, shuffle=False, use_dist_sampler=False):
         # return a data loader based on neighbor sampling
@@ -287,8 +285,8 @@ class SpatialTemporalTask(BasePytorchTask):
 
         return {
             LOSS_KEY: loss,
-            BAR_KEY: { 'train_loss': loss_i },
-            SCALAR_LOG_KEY: { 'train_loss': loss_i }
+            BAR_KEY: {'train_loss': loss_i},
+            SCALAR_LOG_KEY: {'train_loss': loss_i}
         }
 
     def eval_step(self, batch, batch_idx, tag):
@@ -337,8 +335,8 @@ class SpatialTemporalTask(BasePytorchTask):
         loss = np.mean((pred.values - label.values) ** 2)
 
         out = {
-            BAR_KEY: { '{}_loss'.format(tag) : loss },
-            SCALAR_LOG_KEY: { '{}_loss'.format(tag) : loss },
+            BAR_KEY: {'{}_loss'.format(tag): loss},
+            SCALAR_LOG_KEY: {'{}_loss'.format(tag): loss},
             VAL_SCORE_KEY: -loss,  # a larger score corresponds to a better model
         }
 
@@ -364,6 +362,7 @@ if __name__ == '__main__':
     config = STConfig()
     parser = argparse.ArgumentParser(description='Spatial-Temporal-Task')
     add_config_to_argparse(config, parser)
+
 
     # parse arguments to config
     args = parser.parse_args()

@@ -2,17 +2,17 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from gcn import SAGENet, GATNet
+from gcn import SAGENet, GATNet, GatedGCNNet
 from krnn import KRNN
 
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
 
 
 class GCNBlock(nn.Module):
-    def __init__(self, in_channels, spatial_channels, num_nodes,
-                 gcn_type, gcn_partition):
+    def __init__(self, in_channels, spatial_channels, num_nodes, gcn_type):
         super(GCNBlock, self).__init__()
-        GCNUnit = {'sage': SAGENet, 'gat': GATNet}.get(gcn_type)
+        GCNUnit = {'sage': SAGENet, 'gat': GATNet,
+                   'gated': GatedGCNNet}.get(gcn_type)
         self.gcn = GCNUnit(in_channels=in_channels,
                            out_channels=spatial_channels)
 
@@ -36,7 +36,7 @@ class GCNBlock(nn.Module):
 class TGCN(nn.Module):
     def __init__(self, num_nodes, num_edges, num_features,
                  num_timesteps_input, num_timesteps_output,
-                 gcn_type='sage', gcn_partition='sample', hidden_size=64, **kwargs):
+                 gcn_type='sage', hidden_size=64, **kwargs):
         """
         :param num_nodes: Number of nodes in the graph.
         :param num_features: Number of features at each node in each time step.
@@ -46,13 +46,11 @@ class TGCN(nn.Module):
         output by the network.
         """
         super(TGCN, self).__init__()
-        self.gcn_partition = gcn_partition
 
         self.gcn = GCNBlock(in_channels=num_features,
                             spatial_channels=hidden_size,
                             num_nodes=num_nodes,
-                            gcn_type=gcn_type,
-                            gcn_partition=gcn_partition)
+                            gcn_type=gcn_type)
 
         self.gru = KRNN(num_nodes, hidden_size, num_timesteps_input,
                         num_timesteps_output, hidden_size)

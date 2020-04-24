@@ -13,14 +13,15 @@ class GatedGCN(PyG.MessagePassing):
     The GatedGCN operator from the `"Residual Gated Graph ConvNets" 
     <https://arxiv.org/abs/1711.07553>`_ paper
     """
-    def __init__(self, in_channels, out_channels, edge_channels, 
+
+    def __init__(self, in_channels, out_channels, edge_channels,
                  **kwargs):
         super(GatedGCN, self).__init__(aggr='mean', **kwargs)
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.edge_channels = edge_channels
-        
+
         self.weight1 = nn.Parameter(torch.Tensor(in_channels, out_channels))
         self.weight2 = nn.Parameter(torch.Tensor(edge_channels, out_channels))
 
@@ -28,7 +29,7 @@ class GatedGCN(PyG.MessagePassing):
         self.v = nn.Parameter(torch.Tensor(out_channels, out_channels))
 
         self.reset_parameters()
-    
+
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight1)
         nn.init.xavier_uniform_(self.weight2)
@@ -59,9 +60,9 @@ class GatedGCN(PyG.MessagePassing):
 
         bn = nn.BatchNorm1d(aggr_out.shape[1]).to(x.device)
         aggr_out = bn(aggr_out)
-        
+
         aggr_out = x + F.relu(aggr_out)
-        
+
         return aggr_out
 
 
@@ -87,6 +88,7 @@ class GatedGCNNet(nn.Module):
             (X, X[:, res_n_id[1]]), edge_index[1], edge_feature=edge_weight[1].unsqueeze(-1), size=size[1])
 
         return X
+
 
 class MyGATConv(PyG.MessagePassing):
     def __init__(self, in_channels, out_channels, edge_channels=1, normalize='none', **kwargs):
@@ -150,10 +152,11 @@ class MyGATConv(PyG.MessagePassing):
         elif self.normalize == 'ln':
             aggr_out = self.layer_norm(aggr_out)
         elif self.normalize == 'vn':
-            mean = aggr_out.view(aggr_out.size(0), -1).mean(dim=1).view(-1, 1, 1)
-            std = aggr_out.view(aggr_out.size(0), -1).std(dim=1).view(-1, 1, 1)
+            mean = aggr_out.view(aggr_out.size(0), -1).\
+                mean(dim=[0, 2], keepdim=True)
+            std = aggr_out.view(aggr_out.size(0), -1).\
+                std(dim=[0, 2], keepdim=True)
             aggr_out = (aggr_out - mean) / (std + 1e-5)
-
 
         return x + aggr_out
 
@@ -161,8 +164,10 @@ class MyGATConv(PyG.MessagePassing):
 class GATNet(nn.Module):
     def __init__(self, in_channels, out_channels, normalize):
         super(GATNet, self).__init__()
-        self.conv1 = MyGATConv(in_channels=in_channels, out_channels=16, normalize=normalize)
-        self.conv2 = MyGATConv(in_channels=16, out_channels=out_channels, normalize=normalize)
+        self.conv1 = MyGATConv(in_channels=in_channels,
+                               out_channels=16, normalize=normalize)
+        self.conv2 = MyGATConv(
+            in_channels=16, out_channels=out_channels, normalize=normalize)
 
     def forward(self, X, g):
         edge_index = g['edge_index']
@@ -244,4 +249,114 @@ class SAGENet(nn.Module):
 
         X = F.leaky_relu(conv2)
         X = X.permute(1, 0, 2)
+        return X
+
+
+class MyEGNNConv(PyG.MessagePassing):
+    def __init__(self, in_channels, out_channels, edge_channels=1, normalize='none', **kwargs):
+        super(MyEGNNConv, self).__init__(aggr='add', **kwargs)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.edge_channels = edge_channels
+
+        self.weight_n = nn.Parameter(torch.Tensor(in_channels, out_channels))
+        self.weight_e = nn.Parameter(torch.Tensor(edge_channels, out_channels))
+
+        self.query = nn.Parameter(torch.Tensor(out_channels, out_channels))
+        self.key = nn.Parameter(torch.Tensor(out_channels, out_channels))
+
+        self.linear_att = nn.Linear(3 * out_channels, 1)
+        self.linear_out = nn.Linear(2 * out_channels, out_channels)
+
+        self.normalize = normalize
+
+        if normalize == 'bn':
+            self.batch_norm = nn.BatchNorm1d(out_channels)
+        if normalize == 'ln':
+            self.layer_norm = nn.LayerNorm(out_channels)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight_n)
+        nn.init.xavier_uniform_(self.weight_e)
+        nn.init.xavier_uniform_(self.query)
+        nn.init.xavier_uniform_(self.key)
+
+    def forward(self, x, edge_index, edge_feature, size=None):
+        if torch.is_tensor(x):
+            x = torch.matmul(x, self.weight_n)
+        else:
+            x = (None if x[0] is None else torch.matmul(x[0], self.weight_n),
+                 None if x[1] is None else torch.matmul(x[1], self.weight_n))
+
+        edge_emb = torch.matmul(edge_feature, self.weight_e)
+
+        return self.propagate(edge_index, size=size, x=x, edge_emb=edge_emb)
+
+    def message(self, x_j, x_i, edge_emb):
+        # cal att of shape [B, E, 1]
+        query = torch.matmul(x_j, self.query)
+        key = torch.matmul(x_i, self.key)
+
+        edge_emb = edge_emb.unsqueeze(dim=1).expand_as(query)
+
+        att_feature = torch.cat([query, key, edge_emb], dim=-1)
+        att = F.sigmoid(self.linear_att(att_feature))
+
+        # gate of shape [1, E, C]
+        gate = F.sigmoid(edge_emb)
+
+        return att * x_j * gate
+
+    def update(self, aggr_out, x):
+        if (isinstance(x, tuple) or isinstance(x, list)):
+            x = x[1]
+
+        aggr_out = self.linear_out(torch.cat([x, aggr_out], dim=-1))
+
+        if self.normalize == 'bn':
+            aggr_out = aggr_out.permute(0, 2, 1)
+            aggr_out = self.batch_norm(aggr_out)
+            aggr_out = aggr_out.permute(0, 2, 1)
+        elif self.normalize == 'ln':
+            aggr_out = self.layer_norm(aggr_out)
+        elif self.normalize == 'vn':
+            mean = aggr_out.mean(dim=[0, 2], keepdim=True)
+            std = aggr_out.std(dim=[0, 2], keepdim=True)
+            aggr_out = (aggr_out - mean) / (std + 1e-5)
+
+        return x + aggr_out
+
+
+class EGNNNet(nn.Module):
+    def __init__(self, in_channels, out_channels, spatial_channels=16, normalize='none'):
+        super(EGNNNet, self).__init__()
+        self.conv1 = MyEGNNConv(
+            in_channels, spatial_channels, edge_channels=1, normalize=normalize)
+        self.conv2 = MyEGNNConv(
+            spatial_channels, out_channels, edge_channels=1, normalize=normalize)
+
+    def forward(self, X, g):
+        edge_index = g['edge_index']
+        edge_weight = g['edge_weight']
+
+        size = g['size']
+        res_n_id = g['res_n_id']
+
+        # swap node to dim 0
+        X = X.permute(1, 0, 2)
+
+        X = self.conv1(
+            (X, X[res_n_id[0]]), edge_index[0], edge_feature=edge_weight[0].unsqueeze(-1), size=size[0])
+
+        X = F.leaky_relu(X)
+
+        X = self.conv2(
+            (X, X[res_n_id[1]]), edge_index[1], edge_feature=edge_weight[1].unsqueeze(-1), size=size[1])
+
+        X = F.leaky_relu(X)
+        X = X.permute(1, 0, 2)
+
         return X

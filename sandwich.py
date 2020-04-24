@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from gcn import SAGENet, GATNet, GatedGCNNet
+from gcn import SAGENet, GATNet, GatedGCNNet, EGNNNet
 from krnn import KRNN
 
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
@@ -12,7 +12,7 @@ class GCNBlock(nn.Module):
     def __init__(self, in_channels, spatial_channels, num_nodes, gcn_type, normalize):
         super(GCNBlock, self).__init__()
         GCNUnit = {'sage': SAGENet, 'gat': GATNet,
-                   'gated': GatedGCNNet}.get(gcn_type)
+                   'gated': GatedGCNNet, 'egnn': EGNNNet}.get(gcn_type)
         self.gcn = GCNUnit(in_channels=in_channels,
                            out_channels=spatial_channels,
                            normalize=normalize

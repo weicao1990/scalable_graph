@@ -37,14 +37,17 @@ class STConfig(BaseConfig):
         # choices: ./data/METR-LA, ./data/NYC-Sharing-Bike
         self.data_dir = './data/METR-LA'
         self.gcn = 'gat'  # choices: sage, gat
+
         # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.batch_size = 32
         self.normalize = 'none'
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
-
         self.rep_eval = 3  # do evaluation for multiple times
+
+        # pretrained ckpt for krnn, use 'none' to ignore it
+        self.pretrain_ckpt = 'none'
 
 
 def get_model_class(model):
@@ -81,8 +84,8 @@ class NeighborSampleDataset(IterableDataset):
         ).to('cpu')
 
         graph_sampler = NeighborSampler(
-            # graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
-            graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
+            # graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler
@@ -288,6 +291,19 @@ class SpatialTemporalTask(BasePytorchTask):
     def build_optimizer(self, model):
         return torch.optim.Adam(self.model.parameters(), lr=self.config.lr)
 
+    def load_pretrain_ckpt(self):
+        if self.config.pretrain_ckpt == 'none':
+            return
+        state_dict = torch.load(self.config.pretrain_ckpt)['model']
+
+        model = self.model.module.net.gru1.seq2seq
+
+        for name, param in model.named_parameters():
+            name = 'net.seq2seq.{}'.format(name)
+            param.data.copy_(state_dict[name])
+            # if krnn is pretrained, we then freeze it
+            param.requires_grad = False
+
     def train_step(self, batch, batch_idx):
         X, y, g, rows = batch
         y_hat = self.model(X, g)
@@ -393,9 +409,10 @@ if __name__ == '__main__':
     net = WrapperNet(task.config)
     net.init_graph(task.edge_index, task.edge_weight)
 
-    if task.config.skip_train:
-        task.init_model_and_optimizer(net)
-    else:
+    task.init_model_and_optimizer(net)
+    task.load_pretrain_ckpt()
+
+    if not task.config.skip_train:
         task.fit(net)
 
     # Resume the best checkpoint for evaluation

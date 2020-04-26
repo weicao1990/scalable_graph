@@ -538,7 +538,6 @@ class BasePytorchTask(ABC):
         """
         # preparations before training
         self.set_random_seed()  # reset the random seed for each call
-        self.init_model_and_optimizer(model)
         self.model.zero_grad()
         self.model.train()
         self.build_summary_writer()  # build summary writer for tensorboard

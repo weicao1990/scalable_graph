@@ -142,8 +142,10 @@ class KSeq2Seq(nn.Module):
 
         encoder_out = torch.einsum('ijklm,jm->ijkl', outs, attn)
 
+        _encoder_out = encoder_out
+
         if self.decoder is None:
-            return encoder_out
+            return _encoder_out, None
         else:
             encoder_out = encoder_out.reshape(
                 -1, encoder_out.size(2), encoder_out.size(3)
@@ -153,8 +155,9 @@ class KSeq2Seq(nn.Module):
             encoder_hid = encoder_out[-1]
 
             decoder_out = self.decoder(encoder_out, encoder_hid, last)
+            _decoder_out = decoder_out.view(-1, X.size(1), self.num_timesteps_output)
 
-            return decoder_out.view(-1, X.size(1), self.num_timesteps_output)
+            return _encoder_out, _decoder_out
 
 
 class KRNN(nn.Module):

@@ -302,7 +302,7 @@ class SpatialTemporalTask(BasePytorchTask):
             name = 'net.seq2seq.{}'.format(name)
             param.data.copy_(state_dict[name])
             # # if krnn is pretrained, we then freeze it
-            # param.requires_grad = False
+            param.requires_grad = False
 
     def train_step(self, batch, batch_idx):
         X, y, g, rows = batch

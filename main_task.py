@@ -106,12 +106,17 @@ class NeighborSampleDataset(IterableDataset):
         repeats = 1 if self.rep_eval is None else self.rep_eval
 
         for rep in range(repeats):
-            seed = self.epoch if self.rep_eval is None else rep
+            # decide random seeds for graph sampler
 
             if self.use_dist_sampler and dist.is_initialized():
                 # ensure that all processes share the same graph dataflow
                 # set seed as epoch for training, and rep for evaluation
-                torch.manual_seed(seed)
+                torch.manual_seed(self.epoch)
+
+            if self.rep_eval is not None:
+                # fix random seeds for repetitive evaluation
+                # this attribute should not be set during training
+                torch.manual_seed(rep)
 
             for data_flow in self.graph_sampler():
                 g = self.get_subgraph(data_flow)
@@ -124,7 +129,7 @@ class NeighborSampleDataset(IterableDataset):
                     if self.shuffle:
                         # ensure that all processes share the same permutated indices
                         tg = torch.Generator()
-                        tg.manual_seed(seed)
+                        tg.manual_seed(self.epoch)
                         indices = torch.randperm(
                             dataset_len, generator=tg).tolist()
 
@@ -194,14 +199,6 @@ class WrapperNet(nn.Module):
             config.gcn,
             normalize=config.normalize
         )
-        self.register_buffer('edge_index', torch.LongTensor(
-            2, config.num_edges))
-        self.register_buffer('edge_weight', torch.FloatTensor(
-            config.num_edges))
-
-    def init_graph(self, edge_index, edge_weight):
-        self.edge_index.copy_(edge_index)
-        self.edge_weight.copy_(edge_weight)
 
     def forward(self, X, g):
         return self.net(X, g)
@@ -296,7 +293,10 @@ class SpatialTemporalTask(BasePytorchTask):
             return
         state_dict = torch.load(self.config.pretrain_ckpt)['model']
 
-        model = self.model.module.net.gru1.seq2seq
+        if self.has_parallel_wrapper(self.model):
+            model = self.model.module.net.gru1.seq2seq
+        else:
+            model = self.model.net.gru1.seq2seq
 
         for name, param in model.named_parameters():
             name = 'net.seq2seq.{}'.format(name)
@@ -306,15 +306,16 @@ class SpatialTemporalTask(BasePytorchTask):
 
     def train_step(self, batch, batch_idx):
         X, y, g, rows = batch
+        # debug distributed sampler
+        if batch_idx == 0:
+            self.log('train batch {} indices: {}'.format(batch_idx, rows))
+            self.log('train batch {} g.cent_n_id: {}'.format(batch_idx, g['cent_n_id']))
+            self.log('train batch {} g.graph_n_id: {}'.format(batch_idx, g['graph_n_id']))
+
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
         loss = self.loss_func(y_hat, y)
         loss_i = loss.item()  # scalar loss
-
-        # # debug distributed sampler
-        # if batch_idx == 0:
-        #     self.log('indices: {}'.format(rows))
-        #     self.log('g.cent_n_id: {}'.format(g['cent_n_id']))
 
         return {
             LOSS_KEY: loss,
@@ -324,6 +325,11 @@ class SpatialTemporalTask(BasePytorchTask):
 
     def eval_step(self, batch, batch_idx, tag):
         X, y, g, rows = batch
+        # debug repetitive evaluation
+        if batch_idx == 0:
+            self.log('{} batch {} indices: {}'.format(tag, batch_idx, rows))
+            self.log('{} batch {} g.cent_n_id: {}'.format(tag, batch_idx, g['cent_n_id']))
+            self.log('{} batch {} g.graph_n_id: {}'.format(tag, batch_idx, g['graph_n_id']))
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
@@ -407,13 +413,11 @@ if __name__ == '__main__':
     # Necessary for distributed training
     task.set_random_seed()
     net = WrapperNet(task.config)
-    net.init_graph(task.edge_index, task.edge_weight)
-
     task.init_model_and_optimizer(net)
     task.load_pretrain_ckpt()
 
     if not task.config.skip_train:
-        task.fit(net)
+        task.fit()
 
     # Resume the best checkpoint for evaluation
     task.resume_best_checkpoint()

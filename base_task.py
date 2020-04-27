@@ -530,7 +530,7 @@ class BasePytorchTask(ABC):
         self.model = self.decorate_model(model)
         self.optimizer = self.build_optimizer(self.model)
 
-    def fit(self, model):
+    def fit(self, model=None):
         """[summary]
             Fit the given model
         Arguments:
@@ -538,6 +538,10 @@ class BasePytorchTask(ABC):
         """
         # preparations before training
         self.set_random_seed()  # reset the random seed for each call
+        if model is not None:
+            self.init_model_and_optimizer(model)
+        assert self.model is not None and self.optimizer is not None
+
         self.model.zero_grad()
         self.model.train()
         self.build_summary_writer()  # build summary writer for tensorboard

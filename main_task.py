@@ -48,6 +48,7 @@ class STConfig(BaseConfig):
 
         # pretrained ckpt for krnn, use 'none' to ignore it
         self.pretrain_ckpt = 'none'
+        self.use_residual = True
 
 
 def get_model_class(model):
@@ -84,8 +85,8 @@ class NeighborSampleDataset(IterableDataset):
         ).to('cpu')
 
         graph_sampler = NeighborSampler(
-            graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
-            # graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
+            # graph, size=[5, 5], num_hops=2, batch_size=100, shuffle=self.shuffle, add_self_loops=True
+            graph, size=[10, 15], num_hops=2, batch_size=250, shuffle=self.shuffle, add_self_loops=True
         )
 
         return graph_sampler
@@ -190,15 +191,7 @@ class WrapperNet(nn.Module):
 
         self.config = config
         model_class = get_model_class(config.model)
-        self.net = model_class(
-            config.num_nodes,
-            config.num_edges,
-            config.num_features,
-            config.num_timesteps_input,
-            config.num_timesteps_output,
-            config.gcn,
-            normalize=config.normalize
-        )
+        self.net = model_class(**vars(config))
 
     def forward(self, X, g):
         return self.net(X, g)

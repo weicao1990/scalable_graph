@@ -349,8 +349,8 @@ class SpatialTemporalTask(BasePytorchTask):
             'val': y_hat[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
         })
 
-        # pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
-        # label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
 
         return {
             'label': label,

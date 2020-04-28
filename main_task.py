@@ -349,8 +349,8 @@ class SpatialTemporalTask(BasePytorchTask):
             'val': y_hat[index_ptr.t().chunk(3)].squeeze(dim=0).data.cpu().numpy()
         })
 
-        pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
-        label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        # pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+        # label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
 
         return {
             'label': label,
@@ -361,14 +361,16 @@ class SpatialTemporalTask(BasePytorchTask):
         pred = pd.concat([x['pred'] for x in outputs], axis=0)
         label = pd.concat([x['label'] for x in outputs], axis=0)
 
+        pred_std = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).std().mean().values[0]
+
         pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
         label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
 
         loss = np.mean((pred.values - label.values) ** 2)
 
         out = {
-            BAR_KEY: {'{}_loss'.format(tag): loss},
-            SCALAR_LOG_KEY: {'{}_loss'.format(tag): loss},
+            BAR_KEY: {'{}_loss'.format(tag): loss, '{}_pred_std'.format(tag): pred_std},
+            SCALAR_LOG_KEY: {'{}_loss'.format(tag): loss, '{}_pred_std'.format(tag): pred_std},
             VAL_SCORE_KEY: -loss,  # a larger score corresponds to a better model
         }
 

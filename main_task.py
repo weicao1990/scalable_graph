@@ -191,7 +191,7 @@ class WrapperNet(nn.Module):
 
         self.config = config
         model_class = get_model_class(config.model)
-        self.net = model_class(**vars(config))
+        self.net = model_class(config)
 
     def forward(self, X, g):
         return self.net(X, g)

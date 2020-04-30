@@ -19,7 +19,7 @@ import pandas as pd
 from tgcn import TGCN
 from sandwich import Sandwich
 
-from preprocess import generate_dataset, load_nyc_sharing_bike_data, load_metr_la_data, get_normalized_adj
+from preprocess import generate_dataset, load_nyc_sharing_bike_data, load_metr_la_data, load_pems_d7_data, get_normalized_adj
 from base_task import add_config_to_argparse, BaseConfig, BasePytorchTask, \
     LOSS_KEY, BAR_KEY, SCALAR_LOG_KEY, VAL_SCORE_KEY
 
@@ -33,10 +33,10 @@ class STConfig(BaseConfig):
 
         # 2. set spatial-temporal config variables:
         self.model = 'sandwich'  # choices: tgcn, stgcn, gwnet
-        self.dataset = 'metr'  # choices: metr, nyc
+        self.dataset = 'metr'  # choices: metr, nyc, pems
         # choices: ./data/METR-LA, ./data/NYC-Sharing-Bike
         self.data_dir = './data/METR-LA'
-        self.gcn = 'gat'  # choices: sage, gat
+        self.gcn = 'gat'  # choices: sage, gat, egnn
 
         # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.batch_size = 32
@@ -215,8 +215,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
         if self.config.dataset == "metr":
             A, X, means, stds = load_metr_la_data(data_dir)
-        else:
+        elif self.config.dataset == "nyc":
             A, X, means, stds = load_nyc_sharing_bike_data(data_dir)
+        else:
+            A, X, means, stds = load_pems_d7_data(data_dir)
 
         split_line1 = int(X.shape[2] * 0.6)
         split_line2 = int(X.shape[2] * 0.8)

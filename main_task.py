@@ -40,11 +40,12 @@ class STConfig(BaseConfig):
 
         # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.batch_size = 32
+        self.val_batchsize = 8
         self.normalize = 'none'
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
-        self.rep_eval = 3  # do evaluation for multiple times
+        self.rep_eval = 1  # do evaluation for multiple times
 
         # pretrained ckpt for krnn, use 'none' to ignore it
         self.pretrain_ckpt = 'none'
@@ -96,6 +97,7 @@ class NeighborSampleDataset(IterableDataset):
             'edge_index': [block.edge_index for block in data_flow],
             'edge_weight': [self.edge_weight[block.e_id] for block in data_flow],
             'size': [block.size for block in data_flow],
+            'n_id': [block.n_id for block in data_flow],
             'res_n_id': [block.res_n_id for block in data_flow],
             'cent_n_id': data_flow[-1].n_id[data_flow[-1].res_n_id],
             'graph_n_id': data_flow[0].n_id
@@ -275,10 +277,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
     def build_val_dataloader(self):
         # use a small batch size to test the normalization methods (BN/LN)
-        return self.make_sample_dataloader(self.val_input, self.val_target, batch_size=8, rep_eval=self.config.rep_eval)
+        return self.make_sample_dataloader(self.val_input, self.val_target, batch_size=self.config.val_batchsize, rep_eval=self.config.rep_eval)
 
     def build_test_dataloader(self):
-        return self.make_sample_dataloader(self.test_input, self.test_target, batch_size=8, rep_eval=self.config.rep_eval)
+        return self.make_sample_dataloader(self.test_input, self.test_target, batch_size=self.config.val_batchsize, rep_eval=self.config.rep_eval)
 
     def build_optimizer(self, model):
         return torch.optim.Adam(self.model.parameters(), lr=self.config.lr)
@@ -321,10 +323,10 @@ class SpatialTemporalTask(BasePytorchTask):
     def eval_step(self, batch, batch_idx, tag):
         X, y, g, rows = batch
         # debug repetitive evaluation
-        if batch_idx == 0:
-            self.log('{} batch {} indices: {}'.format(tag, batch_idx, rows))
-            self.log('{} batch {} g.cent_n_id: {}'.format(tag, batch_idx, g['cent_n_id']))
-            self.log('{} batch {} g.graph_n_id: {}'.format(tag, batch_idx, g['graph_n_id']))
+        # if batch_idx == 0:
+        #     self.log('{} batch {} indices: {}'.format(tag, batch_idx, rows))
+        #     self.log('{} batch {} g.cent_n_id: {}'.format(tag, batch_idx, g['cent_n_id']))
+        #     self.log('{} batch {} g.graph_n_id: {}'.format(tag, batch_idx, g['graph_n_id']))
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())

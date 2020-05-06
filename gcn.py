@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as PyG
 from torch_geometric.data import Data, Batch, DataLoader, NeighborSampler, ClusterData, ClusterLoader
+from valuenorm import ValueNorm
 
 
 class GatedGCN(PyG.MessagePassing):
@@ -275,6 +276,9 @@ class MyEGNNConv(PyG.MessagePassing):
             self.batch_norm = nn.BatchNorm1d(out_channels)
         if normalize == 'ln':
             self.layer_norm = nn.LayerNorm(out_channels)
+        if normalize == 'vn':
+            max_num_nodes = 700
+            self.value_norm = ValueNorm(max_num_nodes)
 
         self.reset_parameters()
 
@@ -284,7 +288,7 @@ class MyEGNNConv(PyG.MessagePassing):
         nn.init.xavier_uniform_(self.query)
         nn.init.xavier_uniform_(self.key)
 
-    def forward(self, x, edge_index, edge_feature, size=None):
+    def forward(self, x, edge_index, edge_feature, size=None, indices=None):
         if torch.is_tensor(x):
             x = torch.matmul(x, self.weight_n)
         else:
@@ -293,7 +297,7 @@ class MyEGNNConv(PyG.MessagePassing):
 
         edge_emb = torch.matmul(edge_feature, self.weight_e)
 
-        return self.propagate(edge_index, size=size, x=x, edge_emb=edge_emb)
+        return self.propagate(edge_index, size=size, x=x, edge_emb=edge_emb, indices=indices)
 
     def message(self, x_j, x_i, edge_emb):
         # cal att of shape [B, E, 1]
@@ -310,7 +314,7 @@ class MyEGNNConv(PyG.MessagePassing):
 
         return att * x_j * gate
 
-    def update(self, aggr_out, x):
+    def update(self, aggr_out, x, indices):
         if (isinstance(x, tuple) or isinstance(x, list)):
             x = x[1]
 
@@ -323,9 +327,7 @@ class MyEGNNConv(PyG.MessagePassing):
         elif self.normalize == 'ln':
             aggr_out = self.layer_norm(aggr_out)
         elif self.normalize == 'vn':
-            mean = aggr_out.mean(dim=[0, 2], keepdim=True)
-            std = aggr_out.std(dim=[0, 2], keepdim=True)
-            aggr_out = (aggr_out - mean) / (std + 1e-5)
+            aggr_out = self.value_norm(aggr_out, indices)
 
         return x + aggr_out
 
@@ -343,18 +345,19 @@ class EGNNNet(nn.Module):
         edge_weight = g['edge_weight']
 
         size = g['size']
+        n_id = g['n_id']
         res_n_id = g['res_n_id']
 
         # swap node to dim 0
         X = X.permute(1, 0, 2)
 
         X = self.conv1(
-            (X, X[res_n_id[0]]), edge_index[0], edge_feature=edge_weight[0].unsqueeze(-1), size=size[0])
+            (X, X[res_n_id[0]]), edge_index[0], edge_feature=edge_weight[0].unsqueeze(-1), size=size[0], indices=n_id[0][res_n_id[0]])
 
         X = F.leaky_relu(X)
 
         X = self.conv2(
-            (X, X[res_n_id[1]]), edge_index[1], edge_feature=edge_weight[1].unsqueeze(-1), size=size[1])
+            (X, X[res_n_id[1]]), edge_index[1], edge_feature=edge_weight[1].unsqueeze(-1), size=size[1], indices=n_id[1][res_n_id[1]])
 
         X = F.leaky_relu(X)
         X = X.permute(1, 0, 2)

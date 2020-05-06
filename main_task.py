@@ -304,10 +304,10 @@ class SpatialTemporalTask(BasePytorchTask):
     def train_step(self, batch, batch_idx):
         X, y, g, rows = batch
         # debug distributed sampler
-        if batch_idx == 0:
-            self.log('train batch {} indices: {}'.format(batch_idx, rows))
-            self.log('train batch {} g.cent_n_id: {}'.format(batch_idx, g['cent_n_id']))
-            self.log('train batch {} g.graph_n_id: {}'.format(batch_idx, g['graph_n_id']))
+        # if batch_idx == 0:
+        #     self.log('train batch {} indices: {}'.format(batch_idx, rows))
+        #     self.log('train batch {} g.cent_n_id: {}'.format(batch_idx, g['cent_n_id']))
+        #     self.log('train batch {} g.graph_n_id: {}'.format(batch_idx, g['graph_n_id']))
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())

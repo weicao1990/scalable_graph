@@ -60,8 +60,10 @@ class ValueNorm(Module):
         var = input.var(dim=[1, 2])
         # update running statics
         if self.training and self.track_running_stats:
-            self.running_mean[indices].data = ((1.0 - exponential_average_factor) * self.running_mean[indices] + exponential_average_factor * mean).data
-            self.running_var[indices].data = ((1.0 - exponential_average_factor) * self.running_var[indices] + exponential_average_factor * var).data
+            self.running_mean[indices].data = ((1.0 - exponential_average_factor) * self.running_mean[indices] + \
+                exponential_average_factor * mean).data
+            self.running_var[indices].data = ((1.0 - exponential_average_factor) * self.running_var[indices] + \
+                exponential_average_factor * var).data
         
         # normalize
         if self.track_running_stats:

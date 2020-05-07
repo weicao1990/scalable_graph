@@ -153,10 +153,8 @@ class MyGATConv(PyG.MessagePassing):
         elif self.normalize == 'ln':
             aggr_out = self.layer_norm(aggr_out)
         elif self.normalize == 'vn':
-            mean = aggr_out.view(aggr_out.size(0), -1).\
-                mean(dim=[0, 2], keepdim=True)
-            std = aggr_out.view(aggr_out.size(0), -1).\
-                std(dim=[0, 2], keepdim=True)
+            mean = aggr_out.mean(dim=[1, 2], keepdim=True)
+            std = aggr_out.std(dim=[1, 2], keepdim=True)
             aggr_out = (aggr_out - mean) / (std + 1e-5)
 
         return x + aggr_out

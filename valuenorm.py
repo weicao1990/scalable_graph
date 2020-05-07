@@ -54,7 +54,6 @@ class ValueNorm(Module):
                     exponential_average_factor = 1.0 / float(self.num_batches_tracked)
                 else:  
                     exponential_average_factor = self.momentum
-
        
         mean = input.mean(dim=[1, 2])
         var = input.var(dim=[1, 2])

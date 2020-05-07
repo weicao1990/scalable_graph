@@ -279,6 +279,9 @@ class MyEGNNConv(PyG.MessagePassing):
         if normalize == 'vn':
             max_num_nodes = 700
             self.value_norm = ValueNorm(max_num_nodes)
+        if normalize == 'vn_noaffine':
+            max_num_nodes = 700
+            self.value_norm = ValueNorm(max_num_nodes, affine=False)
 
         self.reset_parameters()
 

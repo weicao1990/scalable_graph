@@ -54,15 +54,19 @@ class ValueNorm(Module):
                     exponential_average_factor = 1.0 / float(self.num_batches_tracked)
                 else:  
                     exponential_average_factor = self.momentum
-            # update running statics
-            mean = input.mean(dim=[1, 2])
-            var = input.var(dim=[1, 2])
+
+       
+        mean = input.mean(dim=[1, 2])
+        var = input.var(dim=[1, 2])
+        # update running statics
+        if self.training and self.track_running_stats:
             self.running_mean[indices].data = ((1.0 - exponential_average_factor) * self.running_mean[indices] + exponential_average_factor * mean).data
             self.running_var[indices].data = ((1.0 - exponential_average_factor) * self.running_var[indices] + exponential_average_factor * var).data
-
+        
         # normalize
-        mean = self.running_mean[indices]
-        var = self.running_var[indices]
+        if self.track_running_stats:
+            mean = self.running_mean[indices]
+            var = self.running_var[indices]
         output = (input - mean.view(-1, 1, 1)) / (var.view(-1, 1, 1) + self.eps).sqrt()
         if self.affine:
             output = self.weight[indices].view(-1, 1, 1) * output + self.bias[indices].view(-1, 1, 1)

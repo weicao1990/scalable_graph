@@ -189,9 +189,16 @@ def load_pems_d7_data(directory="data/PeMS-D7"):
 def parse_pems_d7_data(directory, meta_path='/d07_text_meta_2019_01_10.txt'):
     if not os.path.isfile(directory + "/adj_mat.npy"):
         calculate_pems_adj(directory + meta_path)
-    node_dict = str(np.load("node_dict.npy", allow_pickle=True))
+    node_dict = str(np.load(directory + "node_dict.npy", allow_pickle=True))
     node_dict = eval(node_dict)
-    get_pems_node_value(node_dict, directory + '/txt')
+    node_index = get_pems_node_value(directory, node_dict)
+    
+    # reload and save adj for valid nodes
+    A = np.load(directory + "/adj_mat.npy")
+    A = A[node_index][:, node_index]
+    np.save(directory + "./adj_mat.npy", A)
+    
+    return
 
     
 def calculate_pems_adj(meta_path):
@@ -223,7 +230,7 @@ def calculate_pems_adj(meta_path):
     return
 
 
-def get_pems_node_value(node_dict, data_dir):
+def get_pems_node_value(directory, node_dict, data_dir='./txt'):
     start_date = datetime.datetime.strptime('2019-01-23', '%Y-%m-%d')
     end_date = datetime.datetime.strptime('2019-03-22', '%Y-%m-%d')
     day_delta = (end_date - start_date).days + 1
@@ -240,6 +247,15 @@ def get_pems_node_value(node_dict, data_dir):
         time_end = time_start + day_slots
         X[time_start:time_end] = read_pems_daily_data(data_dir, cur_date, node_dict)
     
+    # get valid nodes
+    percentage = 0.2
+    threshold = num_timesteps * percentage
+    nan_cnt = np.count_nonzero(np.isnan(X[:,:,0]), axis=0)
+    node_index = np.arange(num_nodes)[nan_cnt<threshold]
+    X = X[:, node_index]
+    num_nodes = len(node_index)
+    np.save(directory + "./valid_nodes.npy", node_index)
+
     # transpose to (time, node * feature)
     X = X.reshape(num_timesteps, num_nodes * num_features)
     df = pd.DataFrame(X)
@@ -250,9 +266,9 @@ def get_pems_node_value(node_dict, data_dir):
     
     # output shape is (num_nodes, num_features, num_timesteps)
     X = X.transpose(1, 2, 0)
-    np.save("./node_values.npy", X)
+    np.save(directory + "./node_values.npy", X)
     
-    return
+    return node_index
     
     
 def read_pems_daily_data(data_dir, date, node_dict):

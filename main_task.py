@@ -244,7 +244,7 @@ class SpatialTemporalTask(BasePytorchTask):
         self.edge_index = self.sparse_A._indices()
         self.edge_weight = self.sparse_A._values()
         self.mean = means[0]
-        self.std = std[0]
+        self.std = stds[0]
 
         contains_self_loops = torch_geometric.utils.contains_self_loops(
             self.edge_index)

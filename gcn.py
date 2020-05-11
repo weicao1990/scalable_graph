@@ -275,7 +275,7 @@ class MyEGNNConv(PyG.MessagePassing):
         if normalize == 'ln':
             self.layer_norm = nn.LayerNorm(out_channels)
         if normalize == 'vn':
-            max_num_nodes = 700
+            max_num_nodes = 3000
             self.value_norm = ValueNorm(max_num_nodes, affine=False)
 
         self.reset_parameters()

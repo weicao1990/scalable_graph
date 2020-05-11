@@ -158,6 +158,30 @@ def load_metr_la_data(directory="data/METR-LA"):
 
 
 """
+Load PeMS-M dataset
+"""
+def load_pems_m_data(directory="data/PeMS-M"):
+    adj_path = directory + "/W_228.csv"
+    A = np.loadtxt(adj_path, delimiter=',')
+    A = A.astype(np.float32)
+    A = A / A.sum(axis=1)
+
+    node_path = directory + "/V_228.csv"
+    X = np.loadtxt(node_path, delimiter=',')
+    X = X.transpose(1, 0)
+    X = np.expand_dims(X, axis=1)
+    X = X.astype(np.float32)
+    print('(num_nodes, num_features, num_timesteps) is ', X.shape)
+    
+    # Normalization using Z-score method
+    means = np.mean(X, axis=(0, 2))
+    X = X - means.reshape(1, -1, 1)
+    stds = np.std(X, axis=(0, 2))
+    X = X / stds.reshape(1, -1, 1)
+
+    return A, X, means, stds
+
+"""
 Load PeMS-D7 dataset
 """
 def load_pems_d7_data(directory="data/PeMS-D7"):
@@ -187,14 +211,14 @@ def load_pems_d7_data(directory="data/PeMS-D7"):
 
 
 def parse_pems_d7_data(directory, meta_path='/d07_text_meta_2019_01_10.txt'):
-    if not os.path.isfile(directory + "/adj_mat.npy"):
+    if not os.path.isfile(directory + "/raw_adj_mat.npy"):
         calculate_pems_adj(directory + meta_path)
     node_dict = str(np.load(directory + "node_dict.npy", allow_pickle=True))
     node_dict = eval(node_dict)
     node_index = get_pems_node_value(directory, node_dict)
     
     # reload and save adj for valid nodes
-    A = np.load(directory + "/adj_mat.npy")
+    A = np.load(directory + "/raw_adj_mat.npy")
     A = A[node_index][:, node_index]
     np.save(directory + "./adj_mat.npy", A)
     
@@ -204,7 +228,7 @@ def parse_pems_d7_data(directory, meta_path='/d07_text_meta_2019_01_10.txt'):
 def calculate_pems_adj(meta_path):
     # read metadata
     data = pd.read_table(meta_path, sep='\t', usecols=['ID', 'Latitude', 'Longitude'])
-    data = data.dropna(axis=0,how='any').reset_index(drop=True)
+    data = data.dropna(axis=0, how='any').reset_index(drop=True)
     num_nodes = len(data)
     
     # calculate adj matrix
@@ -225,7 +249,7 @@ def calculate_pems_adj(meta_path):
     A[A <= 0.05] = 0
     
     np.save("./node_dict.npy", node_dict)
-    np.save("./adj_mat.npy", A)
+    np.save("./raw_adj_mat.npy", A)
     
     return
 
@@ -247,7 +271,7 @@ def get_pems_node_value(directory, node_dict, data_dir='./txt'):
         time_end = time_start + day_slots
         X[time_start:time_end] = read_pems_daily_data(data_dir, cur_date, node_dict)
     
-    # get valid nodes
+    # get valid nodes by remove nodes with label nan morn than a certain percentage
     percentage = 0.2
     threshold = num_timesteps * percentage
     nan_cnt = np.count_nonzero(np.isnan(X[:,:,0]), axis=0)
@@ -280,8 +304,10 @@ def read_pems_daily_data(data_dir, date, node_dict):
     # load data
     cols_index = [0, 1, 9, 10, 11]
     cols_name = ['Time', 'Station', 'Flow', 'Occupancy', 'Speed']
+    cols_order = ['Time', 'Station', 'Speed', 'Flow', 'Occupancy']
     data = pd.read_table(path, header=None, sep=',', usecols=cols_index)
     data.columns = cols_name
+    data = data[cols_order]
     
     num_nodes = len(node_dict)
     num_timesteps = 12 * 24

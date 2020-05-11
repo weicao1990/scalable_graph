@@ -46,6 +46,7 @@ class STConfig(BaseConfig):
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
         self.rep_eval = 1  # do evaluation for multiple times
+        self.use_statics = False # use data mean and std to calculate pred and label loss in evaluation
 
         # pretrained ckpt for krnn, use 'none' to ignore it
         self.pretrain_ckpt = 'none'
@@ -242,6 +243,8 @@ class SpatialTemporalTask(BasePytorchTask):
         self.sparse_A = self.A.to_sparse()
         self.edge_index = self.sparse_A._indices()
         self.edge_weight = self.sparse_A._values()
+        self.mean = means[0]
+        self.std = std[0]
 
         contains_self_loops = torch_geometric.utils.contains_self_loops(
             self.edge_index)
@@ -311,6 +314,9 @@ class SpatialTemporalTask(BasePytorchTask):
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
+        if self.config.use_statics:
+            y_hat = y_hat * self.std + self.mean
+            y = y * self.std + self.mean
         loss = self.loss_func(y_hat, y)
         loss_i = loss.item()  # scalar loss
 
@@ -367,6 +373,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
         pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
         label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        if self.config.use_statics:
+            pred = pred * self.std + self.mean
+            label = label * self.std + self.mean
 
         loss = np.mean((pred.values - label.values) ** 2)
 

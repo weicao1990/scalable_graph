@@ -19,7 +19,7 @@ import pandas as pd
 from tgcn import TGCN
 from sandwich import Sandwich
 
-from preprocess import generate_dataset, load_nyc_sharing_bike_data, load_metr_la_data, get_normalized_adj
+from preprocess import generate_dataset, load_nyc_sharing_bike_data, load_metr_la_data, load_pems_d7_data, get_normalized_adj
 from base_task import add_config_to_argparse, BaseConfig, BasePytorchTask, \
     LOSS_KEY, BAR_KEY, SCALAR_LOG_KEY, VAL_SCORE_KEY
 
@@ -33,18 +33,20 @@ class STConfig(BaseConfig):
 
         # 2. set spatial-temporal config variables:
         self.model = 'sandwich'  # choices: tgcn, stgcn, gwnet
-        self.dataset = 'metr'  # choices: metr, nyc
+        self.dataset = 'metr'  # choices: metr, nyc, pems
         # choices: ./data/METR-LA, ./data/NYC-Sharing-Bike
         self.data_dir = './data/METR-LA'
-        self.gcn = 'gat'  # choices: sage, gat
+        self.gcn = 'gat'  # choices: sage, gat, egnn
 
         # per-gpu training batch size, real_batch_size = batch_size * num_gpus * grad_accum_steps
         self.batch_size = 32
+        self.val_batchsize = 8
         self.normalize = 'none'
         self.num_timesteps_input = 12  # the length of the input time-series sequence
         self.num_timesteps_output = 3  # the length of the output time-series sequence
         self.lr = 1e-3  # the learning rate
-        self.rep_eval = 3  # do evaluation for multiple times
+        self.rep_eval = 1  # do evaluation for multiple times
+        self.use_statics = False # use data mean and std to calculate pred and label loss in evaluation
 
         # pretrained ckpt for krnn, use 'none' to ignore it
         self.pretrain_ckpt = 'none'
@@ -96,6 +98,7 @@ class NeighborSampleDataset(IterableDataset):
             'edge_index': [block.edge_index for block in data_flow],
             'edge_weight': [self.edge_weight[block.e_id] for block in data_flow],
             'size': [block.size for block in data_flow],
+            'n_id': [block.n_id for block in data_flow],
             'res_n_id': [block.res_n_id for block in data_flow],
             'cent_n_id': data_flow[-1].n_id[data_flow[-1].res_n_id],
             'graph_n_id': data_flow[0].n_id
@@ -215,8 +218,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
         if self.config.dataset == "metr":
             A, X, means, stds = load_metr_la_data(data_dir)
-        else:
+        elif self.config.dataset == "nyc":
             A, X, means, stds = load_nyc_sharing_bike_data(data_dir)
+        else:
+            A, X, means, stds = load_pems_d7_data(data_dir)
 
         split_line1 = int(X.shape[2] * 0.6)
         split_line2 = int(X.shape[2] * 0.8)
@@ -238,6 +243,8 @@ class SpatialTemporalTask(BasePytorchTask):
         self.sparse_A = self.A.to_sparse()
         self.edge_index = self.sparse_A._indices()
         self.edge_weight = self.sparse_A._values()
+        self.mean = means[0]
+        self.std = stds[0]
 
         contains_self_loops = torch_geometric.utils.contains_self_loops(
             self.edge_index)
@@ -273,10 +280,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
     def build_val_dataloader(self):
         # use a small batch size to test the normalization methods (BN/LN)
-        return self.make_sample_dataloader(self.val_input, self.val_target, batch_size=8, rep_eval=self.config.rep_eval)
+        return self.make_sample_dataloader(self.val_input, self.val_target, batch_size=self.config.val_batchsize, rep_eval=self.config.rep_eval)
 
     def build_test_dataloader(self):
-        return self.make_sample_dataloader(self.test_input, self.test_target, batch_size=8, rep_eval=self.config.rep_eval)
+        return self.make_sample_dataloader(self.test_input, self.test_target, batch_size=self.config.val_batchsize, rep_eval=self.config.rep_eval)
 
     def build_optimizer(self, model):
         return torch.optim.Adam(self.model.parameters(), lr=self.config.lr)
@@ -300,15 +307,18 @@ class SpatialTemporalTask(BasePytorchTask):
     def train_step(self, batch, batch_idx):
         X, y, g, rows = batch
         # debug distributed sampler
-        if batch_idx == 0:
-            self.log('train batch {} indices: {}'.format(batch_idx, rows))
-            self.log('train batch {} g.cent_n_id: {}'.format(batch_idx, g['cent_n_id']))
-            self.log('train batch {} g.graph_n_id: {}'.format(batch_idx, g['graph_n_id']))
+        # if batch_idx == 0:
+        #     self.log('train batch {} indices: {}'.format(batch_idx, rows))
+        #     self.log('train batch {} g.cent_n_id: {}'.format(batch_idx, g['cent_n_id']))
+        #     self.log('train batch {} g.graph_n_id: {}'.format(batch_idx, g['graph_n_id']))
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
         loss = self.loss_func(y_hat, y)
-        loss_i = loss.item()  # scalar loss
+        if self.config.use_statics:
+            y_hat = y_hat * self.std + self.mean
+            y = y * self.std + self.mean
+        loss_i = self.loss_func(y_hat, y).item()  # scalar loss
 
         return {
             LOSS_KEY: loss,
@@ -319,10 +329,10 @@ class SpatialTemporalTask(BasePytorchTask):
     def eval_step(self, batch, batch_idx, tag):
         X, y, g, rows = batch
         # debug repetitive evaluation
-        if batch_idx == 0:
-            self.log('{} batch {} indices: {}'.format(tag, batch_idx, rows))
-            self.log('{} batch {} g.cent_n_id: {}'.format(tag, batch_idx, g['cent_n_id']))
-            self.log('{} batch {} g.graph_n_id: {}'.format(tag, batch_idx, g['graph_n_id']))
+        # if batch_idx == 0:
+        #     self.log('{} batch {} indices: {}'.format(tag, batch_idx, rows))
+        #     self.log('{} batch {} g.cent_n_id: {}'.format(tag, batch_idx, g['cent_n_id']))
+        #     self.log('{} batch {} g.graph_n_id: {}'.format(tag, batch_idx, g['graph_n_id']))
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
@@ -363,6 +373,10 @@ class SpatialTemporalTask(BasePytorchTask):
 
         pred = pred.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
         label = label.groupby(['row_idx', 'node_idx', 'feat_idx']).mean()
+
+        if self.config.use_statics:
+            pred = pred * self.std + self.mean
+            label = label * self.std + self.mean
 
         loss = np.mean((pred.values - label.values) ** 2)
 

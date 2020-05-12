@@ -314,11 +314,11 @@ class SpatialTemporalTask(BasePytorchTask):
 
         y_hat = self.model(X, g)
         assert(y.size() == y_hat.size())
+        loss = self.loss_func(y_hat, y)
         if self.config.use_statics:
             y_hat = y_hat * self.std + self.mean
             y = y * self.std + self.mean
-        loss = self.loss_func(y_hat, y)
-        loss_i = loss.item()  # scalar loss
+        loss_i = self.loss_func(y_hat, y).item()  # scalar loss
 
         return {
             LOSS_KEY: loss,
